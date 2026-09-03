@@ -6,8 +6,10 @@ Thassos, and nearby spots). Every run:
 1. Pulls ECMWF EC46 extended-range, medium-range consensus (ECMWF IFS / NOAA
    GFS / DWD ICON), and Open-Meteo Marine sea-state data -- whichever tiers
    are close enough to the trip dates to have real skill.
-2. Prints console tables and appends a row per place/day to `runs.csv` (a
-   permanent, append-only drift log -- nothing is ever overwritten).
+2. Prints console tables and writes a row per place/day/tier to `runs.csv`
+   -- overwritten fresh each run, so it always reflects only the latest
+   run's data (past runs' snapshots still exist in git history, just not
+   accumulated in the file itself).
 3. Writes `dashboard.html`, a self-contained page with a real-coastline map
    card, per-parameter table/chart cards, and a status strip showing which
    tiers are live.
@@ -34,9 +36,10 @@ Steps to point this whole pipeline at a different sailing area and/or
 different trip dates.
 
 Decide first: **new repo, or reuse this one?** Everything below assumes a
-fresh copy of the project (new directory, new git repo) for a second area,
-since `runs.csv` is an append-only historical log tied to one trip -- mixing
-two areas' data into one file defeats the point of it. If you're just
+fresh copy of the project (new directory, new git repo) for a second area --
+running two areas' automation against the same files means each one's
+scheduled run overwrites the other's `runs.csv`/`dashboard.html`/deploy with
+its own latest snapshot instead of the two coexisting. If you're just
 changing dates for the *same* area, you can edit this repo in place and skip
 the repo/deploy-identity steps (7, 8).
 

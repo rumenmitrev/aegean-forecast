@@ -74,10 +74,10 @@ DASHBOARD_OUT = pathlib.Path(__file__).resolve().parent / "dashboard.html"
 # gets deployed as a stable named project so every run updates the same URL.
 SITE_DIR = pathlib.Path(__file__).resolve().parent / "site"
 # === NEW AREA: give it its own project name, or this overwrites the live
-# aegean-forecast site instead of standing up a second one. Also consider
-# pointing RUNS_CSV/DASHBOARD_OUT/SITE_DIR/CHARTS_DIR above at a fresh
-# directory -- a second area needs its own accumulated runs.csv history,
-# not one shared/overwritten log. =============================================
+# aegean-forecast site instead of standing up a second one. Also point
+# RUNS_CSV/DASHBOARD_OUT/SITE_DIR/CHARTS_DIR above at a fresh directory, so
+# a second area's files don't land in the first area's project folder.
+# ==============================================================================
 EDGEONE_PROJECT_NAME = "aegean-forecast"
 # ==============================================================================
 EDGEONE_TOKEN_FILE = pathlib.Path(__file__).resolve().parent / "edgeone_token.txt"
@@ -281,16 +281,26 @@ def save_chart(url, dest):
 
 # --------------------------------------------------------- run log (CSV) --
 
+# runs.csv holds only the latest run, not history -- the first log_rows()
+# call in a process overwrites the file (dropping whatever an earlier run
+# left behind); later calls in the *same* run (one tier's rows apiece)
+# append, so a run with several tiers active still lands together in one
+# file. This trades away any before/after diffing across runs -- if that's
+# ever wanted again, git history on runs.csv still has every past run's
+# committed snapshot, just not accumulated in one file anymore.
+_csv_reset_this_run = False
+
+
 def log_rows(rows):
-    """Append rows to runs.csv so successive runs can be diffed to see
-    whether the forecast is holding or drifting as the trip approaches."""
     if not rows:
         return
-    is_new = not RUNS_CSV.exists()
-    with open(RUNS_CSV, "a", newline="") as f:
+    global _csv_reset_this_run
+    mode = "a" if _csv_reset_this_run else "w"
+    with open(RUNS_CSV, mode, newline="") as f:
         w = csv.DictWriter(f, fieldnames=RUN_FIELDS, restval="")
-        if is_new:
+        if not _csv_reset_this_run:
             w.writeheader()
+            _csv_reset_this_run = True
         w.writerows(rows)
 
 
@@ -695,9 +705,8 @@ def deploy_dashboard():
 
 def main():
     today = now_athens_date()
-    # Minute-resolution, distinct from `today` -- a second run later the same
-    # day must not collide with (and silently look like a duplicate of) the
-    # first in runs.csv.
+    # Minute-resolution, distinct from `today` -- shown as the dashboard's
+    # "data captured" timestamp.
     run_stamp = dt.datetime.now(TRIP_TZ).isoformat(timespec="minutes")
     days_out = (TRIP_START - today).days
     print(f"Today {today}, trip starts in {days_out} days.")
