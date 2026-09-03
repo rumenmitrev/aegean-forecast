@@ -673,17 +673,24 @@ PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS})
         "Skip any before/after comparison -- this is the first run, nothing to compare against."
     )
 
+    # === NEW AREA: this whole local-knowledge paragraph is North-Aegean-
+    # specific -- rewrite it (or drop it) for a different area's actual
+    # geography, or the model will confidently apply irrelevant local
+    # effects to a place they don't exist in. ================================
+    local_knowledge = """Local knowledge about these specific spots, for context if relevant -- \
+don't force it in if a day's data doesn't support it: Lemnos and Agios Efstratios sit in the \
+open channel south of the main islands and tend to run windier than the sheltered coastal \
+spots; the Gulf of Saros can locally accelerate a northeasterly into a stronger funneled flow \
+than the open-water reading suggests; Mount Athos's steep terrain can produce local gap/\
+katabatic gusts stronger than the gridded forecast captures; Thracian Sea (open water) and \
+Keramoti/Thassos are the most sheltered, coastal readings."""
+    # ==============================================================================
+
     prompt = f"""You are a sailing weather analyst briefing a skipper before a trip. The trip \
 runs {TRIP_START} to {TRIP_END} across these North Aegean spots: {places}. Data source for \
 the wind/temp/rain figures below: {wind_source_label}.
 
-Local knowledge about these specific spots, for context if relevant -- don't force it in if a \
-day's data doesn't support it: Lemnos and Agios Efstratios sit in the open channel south of the \
-main islands and tend to run windier than the sheltered coastal spots; the Gulf of Saros can \
-locally accelerate a northeasterly into a stronger funneled flow than the open-water reading \
-suggests; Mount Athos's steep terrain can produce local gap/katabatic gusts stronger than the \
-gridded forecast captures; Thracian Sea (open water) and Keramoti/Thassos are the most \
-sheltered, coastal readings.
+{local_knowledge}
 
 DATA:
 {summary_data_table(wind_records, sea_records)}
