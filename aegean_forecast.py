@@ -81,6 +81,17 @@ SITE_DIR = pathlib.Path(__file__).resolve().parent / "site"
 EDGEONE_PROJECT_NAME = "aegean-forecast"
 # ==============================================================================
 EDGEONE_TOKEN_FILE = pathlib.Path(__file__).resolve().parent / "edgeone_token.txt"
+# LLM sailing summary: Claude API. Tried a local no-auth model
+# (deepseek-r1:1.5b via Ollama) first -- confirmed live that it hallucinates
+# ungrounded output (wrong units, fabricated place names, wrong dates) on
+# this exact task, so that approach was abandoned in favor of a real model.
+# Same graceful-skip pattern as the EdgeOne deploy if the key is missing.
+ANTHROPIC_API_KEY_FILE = pathlib.Path(__file__).resolve().parent / "anthropic_api_key.txt"
+SAILING_SUMMARY_MODEL = "claude-opus-5"
+# This API key is identity-linked with access to multiple workspaces, so
+# every request must say which one it acts in -- not a secret itself (useless
+# without the key), just an org identifier.
+ANTHROPIC_WORKSPACE_ID = "wrkspc_01Kcpz2fTqn23suWv5E7VNX9"
 # One shared schema across tiers so a single CSV covers wind, temp, and sea
 # state -- rows just leave the columns their tier doesn't produce blank.
 RUN_FIELDS = ["run_date", "tier", "model", "spot", "date",
@@ -594,8 +605,133 @@ def placeholder_block(label, unit, opens_note):
     return {"available": False, "label": label, "unit": unit, "opensNote": opens_note}
 
 
+# ------------------------------------------------------- LLM sailing summary --
+
+def summary_data_table(wind_records, sea_records):
+    """Plain-text tables the model reads as its only source of truth: the
+    full wind/temp/rain table (with the model-disagreement flag column),
+    a per-model breakdown on any day models disagreed, and sea state when
+    available. Opus 5 is capable enough to read this directly -- no need
+    to pre-compress it the way the abandoned small local model needed."""
+    lines = ["place,date,wind_mean_kt,gust_kt,dir,rain_mm,temp_lo_c,temp_hi_c,model_flag"]
+    for r in wind_records:
+        lines.append(f"{r['spot']},{r['date']},{r.get('wind_mean')},{r.get('gust')},"
+                      f"{r.get('dir')},{r.get('rain')},{r.get('temp_lo')},{r.get('temp_hi')},"
+                      f"{r.get('flag') or '-'}")
+
+    if any(r.get("flag") for r in wind_records):
+        lines.append("")
+        lines.append("Per-model wind_mean_kt on days models disagreed (model_flag above wasn't '-'):")
+        for r in wind_records:
+            if r.get("flag"):
+                parts = ", ".join(f"{m}={v['wind_mean']}" for m, v in r["per_model"].items())
+                lines.append(f"{r['spot']} {r['date']}: {parts}")
+
+    if sea_records:
+        lines.append("")
+        lines.append("place,date,wave_height_m,wave_period_s,wave_dir")
+        for r in sea_records:
+            lines.append(f"{r['spot']},{r['date']},{r.get('wave')},{r.get('period')},{r.get('dir')}")
+    return "\n".join(lines)
+
+
+def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv):
+    """Ask Claude (SAILING_SUMMARY_MODEL) to turn this run's data into a
+    sailing-focused narrative. Returns None (never raises) if the API key
+    isn't set up or the call fails, so the rest of the pipeline is
+    unaffected either way -- same graceful-skip pattern as deploy_dashboard.
+
+    previous_run_csv (raw runs.csv text from before this run overwrote it,
+    or None on the very first run) lets the model call out what changed
+    since last time instead of only describing a single snapshot."""
+    if not wind_records:
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key and ANTHROPIC_API_KEY_FILE.exists():
+        api_key = ANTHROPIC_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    if not api_key:
+        print(f"Sailing summary skipped: no key (set ANTHROPIC_API_KEY or write {ANTHROPIC_API_KEY_FILE.name}).")
+        return None
+
+    places = ", ".join(SPOTS.keys())
+    previous_section = ""
+    if previous_run_csv:
+        previous_section = f"""
+
+PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS}):
+{previous_run_csv}"""
+
+    changed_instruction = (
+        "A closing section: comparing against the previous run's data, what changed since "
+        "last time -- regime holding steady vs. specific days/spots getting windier, calmer, "
+        "wetter, or backing/veering direction -- and what a sailor should do differently as a "
+        "result. If nothing meaningfully changed, say so plainly instead of inventing a "
+        "difference; a run confirming the prior one is itself useful information (rising "
+        "confidence), not a non-event."
+        if previous_run_csv else
+        "Skip any before/after comparison -- this is the first run, nothing to compare against."
+    )
+
+    prompt = f"""You are a sailing weather analyst briefing a skipper before a trip. The trip \
+runs {TRIP_START} to {TRIP_END} across these North Aegean spots: {places}. Data source for \
+the wind/temp/rain figures below: {wind_source_label}.
+
+Local knowledge about these specific spots, for context if relevant -- don't force it in if a \
+day's data doesn't support it: Lemnos and Agios Efstratios sit in the open channel south of the \
+main islands and tend to run windier than the sheltered coastal spots; the Gulf of Saros can \
+locally accelerate a northeasterly into a stronger funneled flow than the open-water reading \
+suggests; Mount Athos's steep terrain can produce local gap/katabatic gusts stronger than the \
+gridded forecast captures; Thracian Sea (open water) and Keramoti/Thassos are the most \
+sheltered, coastal readings.
+
+DATA:
+{summary_data_table(wind_records, sea_records)}
+{previous_section}
+
+Write a thorough (500-700 word) sailing briefing in flowing prose, organized as a few clearly \
+distinct paragraphs (blank line between each). Plain prose only -- no markdown of any kind: no \
+headers, no bullet lists, no **bold** or *italic* emphasis, no numbered list. This will be \
+displayed as plain text, so any markdown characters would show up literally in the output. \
+Paragraph topics:
+1. The overall wind regime for the week -- direction, typical strength, how steady vs. variable.
+2. Which specific days and spots look calmest vs. roughest, and why (cite the actual numbers).
+3. Any notable rain, temperature swings, or model disagreement (model_flag / per-model spread) -- \
+explain what disagreement means for how much to trust that day's number.
+4. Local effects worth watching (from the context above) where the data actually supports it.
+5. {changed_instruction}
+6. A closing paragraph of concrete, practical routing/timing advice for the week.
+
+Ground every claim in the actual data above -- do not invent locations, units, or dates not \
+present in it."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            default_headers={"anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID},
+        )
+        response = client.messages.create(
+            model=SAILING_SUMMARY_MODEL,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = next((b.text for b in response.content if b.type == "text"), "")
+    except ImportError:
+        print("Sailing summary skipped: pip install anthropic", file=sys.stderr)
+        return None
+    except anthropic.APIStatusError as e:
+        print(f"Sailing summary skipped: API error {e.status_code} ({e.message})", file=sys.stderr)
+        return None
+    except anthropic.APIConnectionError as e:
+        print(f"Sailing summary skipped: connection error ({e})", file=sys.stderr)
+        return None
+
+    return text.strip() or None
+
+
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
-                             sea_records, sea_opens_note, tiers):
+                             sea_records, sea_opens_note, tiers, sailing_summary):
     dates = all_dates()
     params = {}
 
@@ -635,7 +771,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
 
     return {
         "dates": dates, "runStamp": run_stamp, "places": list(SPOTS.keys()),
-        "tiers": tiers, "params": params,
+        "tiers": tiers, "params": params, "sailingSummary": sailing_summary,
     }
 
 
@@ -710,6 +846,14 @@ def main():
     run_stamp = dt.datetime.now(TRIP_TZ).isoformat(timespec="minutes")
     days_out = (TRIP_START - today).days
     print(f"Today {today}, trip starts in {days_out} days.")
+
+    # Snapshot the previous run's data before anything below overwrites it --
+    # runs.csv itself only ever holds the latest run (see log_rows), but the
+    # file on disk right now is still whatever the *last* run left behind
+    # (checked out fresh from git in CI), so this is the last chance to read
+    # it. Feeds the LLM summary a same-trip before/after comparison without
+    # needing runs.csv to accumulate history again.
+    previous_run_csv = RUNS_CSV.read_text(encoding="utf-8") if RUNS_CSV.exists() else None
 
     ec46_records = medium_records = sea_records = None
     ec46_available = TRIP_START - dt.timedelta(days=EXTENDED_RANGE_DAYS)
@@ -832,13 +976,19 @@ def main():
          "note": "MSLP + 850 hPa wind, per day" if chart_tier_live else "opens ~9-10 days out"},
     ]
 
+    print()
+    sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv)
+    if sailing_summary:
+        print(f"##### Sailing summary ({SAILING_SUMMARY_MODEL}, read the numbers above too) #####")
+        print(sailing_summary)
+
     payload = build_dashboard_payload(
         run_stamp=run_stamp,
         wind_records=wind_records, wind_source_label=wind_source_label,
         wind_opens_note=f"Opens ~{ec46_available} (EC46 extended range)",
         sea_records=sea_records,
         sea_opens_note=f"Sea state opens ~{medium_available} — rerun the forecast script closer to the trip",
-        tiers=tiers,
+        tiers=tiers, sailing_summary=sailing_summary,
     )
     write_dashboard(payload)
     print(f"\nDashboard written to {DASHBOARD_OUT}")

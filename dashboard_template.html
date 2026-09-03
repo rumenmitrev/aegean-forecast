@@ -112,6 +112,17 @@
     background: var(--surface-card); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px; margin-bottom: 18px; overflow: hidden;
   }
+
+  .summary-card {
+    background: var(--surface-card); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;
+  }
+  .summary-card .summary-label {
+    font-family: "Public Sans", sans-serif; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); margin: 0 0 8px;
+  }
+  .summary-card p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--ink-primary); }
+  .summary-card p + p { margin-top: 10px; }
   .map-card svg { width: 100%; height: auto; display: block; border-radius: 6px; }
   .map-sea { fill: var(--map-sea); }
   .map-coast { fill: none; stroke: var(--ink-muted); stroke-width: 1; stroke-linejoin: round; }
@@ -272,6 +283,10 @@
 
   <section class="status-strip" id="status-strip"></section>
 
+  <!-- Claude-generated narrative synthesis of the data below -- null
+       (hidden) if ANTHROPIC_API_KEY wasn't set or the call failed this run. -->
+  <section class="summary-card" id="summary-card" hidden></section>
+
   <main id="cards"></main>
 
   <!-- Otherwise area-agnostic -- only touch this if you also rename the
@@ -381,6 +396,25 @@ __COASTLINE_DATA_JSON__
     const e = document.createElementNS(SVGNS, tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
     return e;
+  }
+
+  function buildSummary() {
+    const card = document.getElementById("summary-card");
+    if (!DATA.sailingSummary) return; // stays hidden -- no key/API error this run
+
+    const label = document.createElement("p");
+    label.className = "summary-label";
+    label.textContent = "Sailing summary · AI-generated, read the numbers above too";
+    card.appendChild(label);
+    // Multiple paragraphs requested from the model -- render each on its
+    // own <p> instead of one dense block.
+    DATA.sailingSummary.split(/\n\s*\n/).forEach(para => {
+      if (!para.trim()) return;
+      const p = document.createElement("p");
+      p.textContent = para.trim();
+      card.appendChild(p);
+    });
+    card.hidden = false;
   }
 
   function buildMap() {
@@ -815,6 +849,7 @@ __COASTLINE_DATA_JSON__
     return card;
   }
 
+  buildSummary();
   buildMap();
   buildStatusStrip();
 

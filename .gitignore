@@ -1,6 +1,7 @@
 # Secrets -- never commit these
 edgeone_token.txt
 tencentcloud_credentials.env
+anthropic_api_key.txt
 
 # Regenerable
 node_modules/
