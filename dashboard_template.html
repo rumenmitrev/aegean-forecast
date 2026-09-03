@@ -290,14 +290,40 @@
   <main id="cards"></main>
 
   <!-- Otherwise area-agnostic -- only touch this if you also rename the
-       script file itself away from aegean_forecast.py. -->
+       script file itself away from aegean_forecast.py, or change the
+       kernel/flag constants in aegean_forecast.py (KERNEL_STEP_DEG,
+       SPREAD_WIND_KT, SPREAD_DIR_DEG, DIR_FLAG_MIN_WIND_KT) -- the numbers
+       below are hand-written to match those, not templated in. -->
   <footer class="foot">
     <p><b>Sources:</b> ECMWF EC46 sub-seasonal ensemble mean, medium-range consensus of ECMWF IFS / NOAA GFS /
     DWD ICON, sea state from Open-Meteo Marine, and synoptic charts from charts.ecmwf.int &mdash; all via
     <b>aegean_forecast.py</b>. Each place uses its nearest sea grid cell, not land.</p>
+
+    <p><b>How the medium-range wind/temp/rain/gust numbers are calculated:</b> each of the three models
+    (ECMWF/GFS/ICON) is sampled over a 3&times;3 grid of points around every place &mdash; roughly
+    30&times;25&nbsp;km, not a single GPS pin &mdash; because a boat sailing that spot experiences the whole
+    patch of sea around it, not one exact point. Wind speed, direction, temperature, and rain are the
+    <b>mean</b> across those 9 points per model, which smooths out single-cell grid noise. Gust is the
+    <b>max</b> across those 9 points instead of the mean &mdash; gust is already a worst-case figure, so
+    averaging it away would blunt a real local spike (a gap-wind gust one grid cell over, say) instead of
+    surfacing it. The three models are then combined the same way on top of that: mean for wind/temp/rain/
+    direction, max for gust &mdash; so the gust shown is the strongest plausible gust anywhere in that patch,
+    across all three models. That makes it a safety margin by design, deliberately higher than "the exact
+    point forecast," not a bug.</p>
+
+    <p><b>Model disagreement:</b> a place/day is flagged (&#9888;) when the three models' wind speeds spread
+    by more than 6kt, or their directions by more than 45&deg; while wind is at least 5kt. On a flagged day
+    the wind cell shows the actual min&ndash;max span across models instead of one blended number (a mean of
+    6kt and 20kt would misrepresent both), and the full per-model breakdown always goes into
+    <b>runs.csv</b> and into the data given to the AI summary above, so it can explain what the disagreement
+    means for that day rather than silently averaging past it.</p>
+
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
-    day-by-day forecast. Rows show the region's actual spread (sheltered vs. exposed spots), never a single
-    averaged number, since this route crosses both. This page regenerates automatically on every run.</p>
+    day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
+    &sim;36&nbsp;km resolution) and sea state (a single model, Open-Meteo Marine) are each still read at one
+    point, not kernelled like the medium-range consensus above. Rows show the region's actual spread
+    (sheltered vs. exposed spots), never a single averaged number, since this route crosses both. This page
+    regenerates automatically on every run.</p>
   </footer>
 
 </div>

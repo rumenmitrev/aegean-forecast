@@ -13,9 +13,18 @@ Progressively sharper picture as the trip approaches:
   <=46 days out: ECMWF EC46 sub-seasonal ENSEMBLE MEAN (extended range, 36 km).
                  Coarse, smooths fronts -> read as regime/tendency, not a forecast.
   <=15 days out: medium-range consensus across three independent models --
-                 ECMWF IFS, NOAA GFS, DWD ICON -- averaged into one number per
-                 place/day, with a flag when the three disagree (real skill,
-                 real fronts). Per-model detail still goes to runs.csv.
+                 ECMWF IFS, NOAA GFS, DWD ICON. Each model is read from a 3x3
+                 grid kernel around every spot (~30x25 km, see KERNEL_STEP_DEG
+                 below), not one point -- a boat sailing a spot experiences
+                 that whole patch of sea, not a single GPS pin. Wind/temp/
+                 rain/direction are the kernel MEAN (smooths single-cell grid
+                 noise); gust is the kernel MAX (it's already a worst-case
+                 figure, so averaging it away would blunt real local peaks,
+                 e.g. a gap-wind gust one cell over). The three models' kernel
+                 values are then combined the same way -- mean for wind/temp/
+                 rain/direction, max for gust -- with a flag when they
+                 disagree (real skill, real fronts). Per-model detail still
+                 goes to runs.csv.
   <=15 days out: sea state (significant wave height, period, direction).
   ~<=9-10 days  : ECMWF's own official synoptic chart (MSLP + 850 hPa wind) is
                  pulled and saved as PNG per day -- actual fronts/highs/lows,
@@ -147,6 +156,28 @@ MEDIUM_LABELS = {"ecmwf_ifs": "ECMWF", "gfs_seamless": "GFS", "icon_seamless": "
 # request can silently resolve to a mainland or mountaintop cell instead.
 CELL_SELECTION = "sea"
 
+# Medium-range only (see kernel_points()): each model is sampled on a 3x3
+# grid around every spot instead of one point, then combined per model
+# before the existing model-vs-model consensus logic runs. 0.15 deg step ->
+# edge-to-edge span of 0.3 deg -- at these latitudes (~39.5-40.9N) that's
+# ~33 km north-south and ~25 km east-west (a degree of longitude shrinks
+# with latitude, degree of latitude doesn't), so "3x3" is closer to 30x25 km
+# than a literal square. Confirmed live that Open-Meteo resolves all 9
+# requested points to 9 distinct grid cells at this spacing, and that
+# multiple locations batch into a single HTTP call (no extra request cost
+# for the wider kernel). EC46 and sea state stay single-point/single-model,
+# unaffected by this -- EC46 is already someone else's 51-member ensemble
+# mean, and sea state has no models-consensus step to extend this into.
+KERNEL_STEP_DEG = 0.15
+KERNEL_OFFSETS = (-KERNEL_STEP_DEG, 0.0, KERNEL_STEP_DEG)
+
+
+def kernel_points(lat, lon):
+    """3x3 grid of (lat, lon) pairs around a spot, row-major (dlat outer,
+    dlon inner) so index 4 (of 9) is always the exact-point center cell."""
+    return [(round(lat + dlat, 4), round(lon + dlon, 4))
+            for dlat in KERNEL_OFFSETS for dlon in KERNEL_OFFSETS]
+
 
 # ---------------------------------------------------------------- helpers --
 
@@ -221,8 +252,15 @@ def ec46(lat, lon):
 
 
 def medium_range(lat, lon):
+    """One HTTP call for all 9 points of the 3x3 kernel around (lat, lon) --
+    Open-Meteo accepts comma-separated multi-location lat/lon and returns a
+    JSON array in the same order, so the wider kernel costs nothing extra in
+    requests. Returns that list of 9 per-cell responses, consumed by
+    extract_medium_records()."""
+    points = kernel_points(lat, lon)
     return fetch("https://api.open-meteo.com/v1/forecast", {
-        "latitude": lat, "longitude": lon,
+        "latitude": ",".join(str(p[0]) for p in points),
+        "longitude": ",".join(str(p[1]) for p in points),
         "daily": DAILY,
         "models": ",".join(MEDIUM_MODELS),
         "forecast_days": MEDIUM_RANGE_DAYS,
@@ -332,20 +370,32 @@ def extract_ec46_records(name, data):
     return out
 
 
-def extract_medium_records(name, data):
-    d = data["daily"]
+def extract_medium_records(name, cells):
+    """cells: the 9 kernel-point responses from medium_range(), in
+    kernel_points() order. For each model, combine across the 9 cells first
+    -- MEAN for wind/temp/rain/direction (smooths single-cell grid noise),
+    MAX for gust (a worst-case figure -- averaging it away would blunt real
+    local peaks instead of surfacing them). Everything below this point is
+    unchanged from before the kernel: it just receives per-model values that
+    are now kernel-combined instead of single-cell, and still averages
+    (wind/temp/rain/direction) or worst-cases (gust) those across the three
+    models the same way, with the same disagreement flag."""
+    ref_time = cells[len(cells) // 2]["daily"]["time"]
     out = []
-    for i, day in trip_dates(d["time"]):
+    for i, day in trip_dates(ref_time):
         per_model = {}
         for m in MEDIUM_MODELS:
+            def series(key, _cells=cells, _i=i, _m=m):
+                return [c["daily"].get(f"{key}_{_m}", [None] * len(ref_time))[_i] for c in _cells]
+            cell_gusts = [v for v in series("wind_gusts_10m_max") if v is not None]
             per_model[m] = {
-                "wind_mean": d.get(f"wind_speed_10m_mean_{m}", [None] * len(d["time"]))[i],
-                "wind_max": d.get(f"wind_speed_10m_max_{m}", [None] * len(d["time"]))[i],
-                "gust": d.get(f"wind_gusts_10m_max_{m}", [None] * len(d["time"]))[i],
-                "dir": d.get(f"wind_direction_10m_dominant_{m}", [None] * len(d["time"]))[i],
-                "rain": d.get(f"precipitation_sum_{m}", [None] * len(d["time"]))[i],
-                "temp_lo": d.get(f"temperature_2m_min_{m}", [None] * len(d["time"]))[i],
-                "temp_hi": d.get(f"temperature_2m_max_{m}", [None] * len(d["time"]))[i],
+                "wind_mean": mean(series("wind_speed_10m_mean")),
+                "wind_max": mean(series("wind_speed_10m_max")),
+                "gust": max(cell_gusts) if cell_gusts else None,
+                "dir": circular_mean_deg(series("wind_direction_10m_dominant")),
+                "rain": mean(series("precipitation_sum")),
+                "temp_lo": mean(series("temperature_2m_min")),
+                "temp_hi": mean(series("temperature_2m_max")),
             }
         speeds = [v["wind_mean"] for v in per_model.values() if v["wind_mean"] is not None]
         dirs = [v["dir"] for v in per_model.values() if v["dir"] is not None]
@@ -686,9 +736,41 @@ katabatic gusts stronger than the gridded forecast captures; Thracian Sea (open 
 Keramoti/Thassos are the most sheltered, coastal readings."""
     # ==============================================================================
 
+    # Tells the model what it's actually looking at, so it reasons about
+    # model_flag/gust correctly instead of assuming a plain single-point
+    # forecast. Branches on wind_source_label since EC46 and the medium-range
+    # consensus are fetched and combined completely differently.
+    if wind_source_label.startswith("Medium-range"):
+        data_methodology = """How the wind/temp/rain/gust figures below were produced: each of the \
+three models (ECMWF IFS, NOAA GFS, DWD ICON) is sampled over a 3x3 grid of points (~30x25km) around \
+every spot, not one exact GPS point -- reflecting the patch of sea a boat sailing that spot actually \
+moves through. Wind speed, temperature, rain, and direction are each model's mean across those 9 \
+points; gust is each model's max across those 9 points instead of a mean, since gust is inherently a \
+worst-case figure and averaging it away would hide a real local peak (e.g. a gap-wind gust one grid \
+cell over). The three models' results are then combined the same way on top of that: mean for \
+wind/temp/rain/direction, max for gust -- so the gust figure shown is deliberately the strongest plausible \
+gust anywhere in that patch across all three models, a safety margin rather than a literal single-point \
+prediction. model_flag marks a day where the three models disagree by more than 6kt (wind) or 45 \
+degrees (direction, only counted when wind is at least 5kt) -- treat those days' numbers as less \
+certain; the per-model breakdown further down gives the actual spread."""
+    elif wind_source_label.startswith("EC46"):
+        data_methodology = """How the wind/temp/rain figures below were produced: this is ECMWF's own \
+EC46 sub-seasonal 51-member ensemble mean at ~36km resolution -- a single number per spot/day, already \
+averaged by ECMWF, with no per-model breakdown or model_flag at this range (that only exists once the \
+medium-range consensus tier takes over closer to the trip). Read it as the week's regime/tendency this \
+far out, not a day-by-day forecast -- the ensemble mean smooths out individual fronts."""
+    else:
+        data_methodology = ""
+    if sea_records:
+        data_methodology += ("\n\nSea state (wave height/period/direction) comes from a single model "
+                              "(Open-Meteo Marine) at one point per spot, not kernelled or multi-model "
+                              "like the wind figures.")
+
     prompt = f"""You are a sailing weather analyst briefing a skipper before a trip. The trip \
 runs {TRIP_START} to {TRIP_END} across these North Aegean spots: {places}. Data source for \
 the wind/temp/rain figures below: {wind_source_label}.
+
+{data_methodology}
 
 {local_knowledge}
 
@@ -889,7 +971,9 @@ def main():
         print(f"Medium-range consensus (ECMWF/GFS/ICON) will start covering the trip from ~{medium_available}.")
     else:
         print("##### Medium-range consensus: mean of ECMWF IFS / NOAA GFS / DWD ICON #####")
-        print("Gust = worst case across the three. Flag = models disagree on wind "
+        print(f"Each model sampled over a ~30x25km kernel (3x3 grid, {KERNEL_STEP_DEG} deg step) around "
+              "every spot, not one point. Wind/temp/rain/direction = kernel mean; gust = kernel max, "
+              "then worst case across the three models. Flag = models disagree on wind "
               f"(>{SPREAD_WIND_KT}kt spread) or direction (>{SPREAD_DIR_DEG}deg spread, wind >= {DIR_FLAG_MIN_WIND_KT}kt). "
               "Per-model detail is in runs.csv.")
         records = []

@@ -42,6 +42,13 @@ with a single JSON (or txt) config file the script loads at startup.
   an optional `local_knowledge` string field to the config schema (empty/
   absent means the prompt just skips that paragraph) instead of requiring a
   code edit to rewrite or drop it per area.
+- `KERNEL_STEP_DEG` (medium-range kernel size, currently a fixed 0.15 deg /
+  ~30x25 km for every spot) is geography-dependent, not area-specific in the
+  same sense as the above -- a tighter archipelago or a coastline with
+  sharper local terrain might want a smaller kernel than a stretch of open
+  water. Not urgent enough to block the config work, but worth an optional
+  `kernel_step_deg` config field (default 0.15) if a future area's spots
+  turn out to need a different size than this one.
 
 **`dashboard_template.html` changes:**
 - Replace the static `<title>`, `.eyebrow`, `<h1>`, `.route` text with JS
@@ -70,3 +77,20 @@ with a single JSON (or txt) config file the script loads at startup.
 **Estimated effort:** a few focused hours, not a rewrite -- mechanical
 constant/string relocation plus one JS refactor (header + label rendering),
 no architectural changes to the fetch/log/render/deploy pipeline itself.
+
+## Sea-state kernel (wave height) -- same idea as the wind kernel, not done yet
+
+The medium-range wind kernel (`kernel_points()` / `extract_medium_records()`)
+samples each model over a 3x3 grid around every spot instead of one point --
+mean for wind/temp/rain/direction, max for gust (a boat sails through a patch
+of sea, not a GPS pin, and gust specifically shouldn't be averaged away).
+Sea state (`extract_sea_state_records()`) is still single-point, single-model
+(Open-Meteo Marine has no multi-model consensus step to piggyback the kernel
+logic onto, which is why it wasn't included when the wind kernel was added).
+The same reasoning plausibly applies to significant wave height near capes/
+channels, where wave state can vary sharply over a short distance -- worth a
+small follow-up: kernel-MAX for wave height (worst case, same logic as gust),
+kernel-mean or leave single-point for period/direction (less clearly a
+"worst case" quantity). Low effort -- `sea_state()`/`extract_sea_state_records()`
+would follow the same `kernel_points()` + one-HTTP-call-for-9-points pattern
+already proven out for `medium_range()`.

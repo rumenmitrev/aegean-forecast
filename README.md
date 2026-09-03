@@ -5,7 +5,9 @@ Thassos, and nearby spots). Every run:
 
 1. Pulls ECMWF EC46 extended-range, medium-range consensus (ECMWF IFS / NOAA
    GFS / DWD ICON), and Open-Meteo Marine sea-state data -- whichever tiers
-   are close enough to the trip dates to have real skill.
+   are close enough to the trip dates to have real skill. The medium-range
+   consensus samples each model over a 3x3 grid kernel around every spot
+   (not one point) -- see "How the numbers are calculated" below.
 2. Prints console tables and writes a row per place/day/tier to `runs.csv`
    -- overwritten fresh each run, so it always reflects only the latest
    run's data (past runs' snapshots still exist in git history, just not
@@ -21,6 +23,35 @@ Thassos, and nearby spots). Every run:
    current run after run.
 
 Automated via a scheduled GitHub Actions workflow (`.github/workflows/forecast.yml`, once daily at 10:00 Europe/Athens) that runs the script and commits the updated `runs.csv`/`dashboard.html` back to the repo.
+
+## How the numbers are calculated
+
+The medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON, the tier that's live from ~15 days
+out) doesn't read a single point per spot. Each model is sampled over a **3x3 grid kernel**
+(`KERNEL_STEP_DEG = 0.15`, ~30x25 km at these latitudes) around every spot -- a boat sailing a
+spot moves through that whole patch of sea, not one exact GPS pin. Open-Meteo batches all 9
+points into one HTTP call per model set, so the wider kernel costs nothing extra in requests.
+
+- **Wind speed, temperature, rain, direction**: each model's **mean** across the 9 kernel points --
+  smooths single-cell grid noise for values that vary smoothly in space.
+- **Gust**: each model's **max** across the 9 kernel points instead of the mean -- gust is already
+  a worst-case figure, so averaging it away would blunt a real local peak (e.g. a gap-wind gust one
+  grid cell over) instead of surfacing it.
+- The three models' kernel-combined values are then **combined the same way on top of that**: mean
+  for wind/temp/rain/direction, max for gust across the three models. So the gust shown is
+  deliberately the strongest plausible gust anywhere in that ~30x25 km patch, across all three
+  models -- a safety margin, not a literal single-point prediction.
+- **Model disagreement**: a place/day is flagged when the three models' wind speeds spread by more
+  than `SPREAD_WIND_KT` (6kt), or their directions by more than `SPREAD_DIR_DEG` (45deg) while wind
+  is at least `DIR_FLAG_MIN_WIND_KT` (5kt). Flagged days show the actual min-max span instead of a
+  blended mean, and the full per-model breakdown always goes to `runs.csv` and to the Claude prompt.
+
+EC46 (the coarser, farther-out tier) and sea state (Open-Meteo Marine) are each still read at a
+single point with no per-model combining -- EC46 is already ECMWF's own 51-member ensemble mean,
+and sea state has no models-consensus step to extend the kernel/max logic into. The dashboard's
+footer explains all of this in plain language for a reader, and the Claude prompt in
+`generate_sailing_summary()` gets its own methodology paragraph (branched by tier) so the AI
+summary reasons about `model_flag`/gust correctly instead of assuming a plain point forecast.
 
 ## Files
 
