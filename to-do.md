@@ -36,6 +36,12 @@ with a single JSON (or txt) config file the script loads at startup.
 - `build_dashboard_payload()` needs to also pass through `page_title`,
   `eyebrow`, `heading`, and each spot's `short`/`short_mobile` labels, so
   the template has zero hardcoded per-area strings left.
+- `generate_sailing_summary()`'s `local_knowledge` paragraph (North-Aegean-
+  specific sailing effects -- channel funneling, gap winds, which spots are
+  sheltered) is hardcoded prose fed straight into the Claude prompt -- add
+  an optional `local_knowledge` string field to the config schema (empty/
+  absent means the prompt just skips that paragraph) instead of requiring a
+  code edit to rewrite or drop it per area.
 
 **`dashboard_template.html` changes:**
 - Replace the static `<title>`, `.eyebrow`, `<h1>`, `.route` text with JS
