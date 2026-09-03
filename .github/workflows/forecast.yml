@@ -1,0 +1,44 @@
+name: Aegean forecast
+
+on:
+  schedule:
+    # 21:00 and 09:00 UTC = 00:00 and 12:00 Europe/Athens *while EEST (UTC+3)
+    # holds*. GitHub Actions cron is fixed UTC with no DST awareness, so this
+    # drifts an hour once EEST ends (last Sunday of October) -- past this
+    # trip's window (3-10 Oct), so harmless for this trip, but re-check the
+    # offset if this keeps running past the DST changeover.
+    - cron: "0 21,9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: pip install requests
+
+      - run: npm ci
+
+      - run: python3 aegean_forecast.py
+        env:
+          EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add runs.csv dashboard.html site/index.html
+          git diff --staged --quiet || git commit -m "Automated run: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
