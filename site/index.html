@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- NEW AREA: rename the tab/gallery title -->
+<title>Aegean Forecast</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-page:   #d7d5cf;
+    --surface-card:   #e8e6e0;
+    --ink-primary:    #0b0b0b;
+    --ink-secondary:  #4a4943;
+    --ink-muted:      #78766f;
+    --gridline:       #cecbc3;
+    --axis:           #b3b1a5;
+    --border:         rgba(11,11,11,0.14);
+    --accent:         #2a78d6;
+    --accent-wash:    rgba(42,120,214,0.10);
+    --status-good:    #0ca30c;
+    --place-1: #2a78d6;
+    --place-2: #eb6834;
+    --place-3: #1baf7a;
+    --place-4: #eda100;
+    --place-5: #e87ba4;
+    --place-6: #008300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-page:   #0d0d0d;
+      --surface-card:   #1a1a19;
+      --ink-primary:    #ffffff;
+      --ink-secondary:  #c3c2b7;
+      --ink-muted:      #898781;
+      --gridline:       #2c2c2a;
+      --axis:           #383835;
+      --border:         rgba(255,255,255,0.10);
+      --accent:         #3987e5;
+      --accent-wash:    rgba(57,135,229,0.14);
+      --status-good:    #0ca30c;
+      --place-1: #3987e5;
+      --place-2: #d95926;
+      --place-3: #199e70;
+      --place-4: #c98500;
+      --place-5: #d55181;
+      --place-6: #008300;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-page:   #0d0d0d;
+    --surface-card:   #1a1a19;
+    --ink-primary:    #ffffff;
+    --ink-secondary:  #c3c2b7;
+    --ink-muted:      #898781;
+    --gridline:       #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255,255,255,0.10);
+    --accent:         #3987e5;
+    --accent-wash:    rgba(57,135,229,0.14);
+    --status-good:    #0ca30c;
+    --place-1: #3987e5;
+    --place-2: #d95926;
+    --place-3: #199e70;
+    --place-4: #c98500;
+    --place-5: #d55181;
+    --place-6: #008300;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--surface-page);
+    color: var(--ink-primary);
+    font-family: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .page { max-width: 980px; margin: 0 auto; padding: 28px 20px 56px; }
+
+  h1, h2, .display {
+    font-family: "Barlow Condensed", system-ui, sans-serif;
+    text-wrap: balance;
+    letter-spacing: 0.01em;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  header.top {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 12px 24px;
+    padding-bottom: 18px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    font-family: "Public Sans", sans-serif;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 4px;
+  }
+  h1 { font-size: 40px; font-weight: 700; line-height: 1; margin: 0; }
+  .route { color: var(--ink-secondary); font-size: 16px; margin: 6px 0 0; }
+  .run-badge { text-align: right; font-size: 13px; color: var(--ink-muted); }
+  .run-badge .stamp { color: var(--ink-secondary); font-weight: 500; }
+
+  .status-strip {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    margin-bottom: 28px;
+  }
+  .status-chip {
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 13px;
+  }
+  .status-chip .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .status-chip.live .dot { background: var(--status-good); }
+  .status-chip.pending .dot { border: 1.5px solid var(--ink-muted); background: transparent; }
+  .status-chip .tier-name { font-weight: 600; color: var(--ink-primary); }
+  .status-chip .tier-state { display: block; color: var(--ink-muted); margin-top: 3px; margin-left: 14px; }
+
+  main { display: flex; flex-direction: column; gap: 18px; }
+  .card {
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px 18px;
+  }
+  .card-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .card-title { font-size: 22px; font-weight: 700; line-height: 1.1; margin: 0; }
+  .card-unit { color: var(--ink-muted); font-size: 13px; margin-top: 2px; }
+  .view-toggle { display: flex; gap: 4px; flex-shrink: 0; }
+  .view-toggle button {
+    width: 30px; height: 30px; display: grid; place-items: center;
+    background: transparent; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--ink-muted); cursor: pointer; padding: 0;
+  }
+  .view-toggle button:hover { color: var(--ink-primary); }
+  .view-toggle button[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent); background: var(--accent-wash);
+  }
+  .view-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .view-toggle svg { width: 16px; height: 16px; }
+
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table-scroll { overflow-x: auto; }
+  table.data-table th, table.data-table td {
+    padding: 6px 8px; text-align: right; white-space: nowrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums;
+  }
+  table.data-table th:first-child, table.data-table td:first-child {
+    text-align: left; font-family: "Public Sans", sans-serif; color: var(--ink-secondary);
+  }
+  table.data-table thead th {
+    color: var(--ink-muted); font-weight: 500; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.04em; border-bottom: 1px solid var(--gridline);
+  }
+  table.data-table tbody tr:not(:last-child) td { border-bottom: 1px solid var(--gridline); }
+  table.data-table tbody tr:last-child td {
+    font-weight: 600; color: var(--ink-primary); border-top: 1px solid var(--axis); padding-top: 8px;
+  }
+  table.data-table tbody tr:last-child td:first-child { color: var(--ink-primary); }
+
+  .range-caption { margin-top: 10px; font-size: 13px; color: var(--ink-secondary); }
+  .range-caption b { color: var(--ink-primary); font-weight: 600; }
+
+  .chart-wrap { position: relative; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  .gridline { stroke: var(--gridline); stroke-width: 1; }
+  .axis-label { fill: var(--ink-muted); font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .series-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .end-dot { stroke: var(--surface-card); stroke-width: 2; }
+  .crosshair { stroke: var(--axis); stroke-width: 1; opacity: 0; pointer-events: none; }
+  .hover-rect { fill: transparent; cursor: crosshair; touch-action: none; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--gridline); font-size: 12.5px; color: var(--ink-secondary);
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .legend-key { width: 14px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+  .legend-item .val { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--ink-primary); font-weight: 500; }
+
+  .tooltip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity 60ms linear;
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    min-width: 160px; z-index: 5;
+  }
+  .tooltip .t-date { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 14px; margin-bottom: 5px; }
+  .tooltip .t-row { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+  .tooltip .t-row + .t-row { margin-top: 3px; }
+  .tooltip .t-key { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-secondary); }
+  .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+  .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
+
+  .placeholder-body {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 4px; color: var(--ink-muted); font-size: 13.5px;
+    border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .placeholder-body .dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink-muted); flex-shrink: 0; }
+
+  footer.foot {
+    margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--ink-muted); line-height: 1.6;
+  }
+  footer.foot b { color: var(--ink-secondary); }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 30px; }
+    .status-strip { grid-template-columns: 1fr 1fr; }
+    header.top { flex-direction: column; }
+    .run-badge { text-align: left; }
+  }
+
+  /* Phone portrait is the tightest real layout: six place columns plus a
+     date column need to fit without horizontal scroll, since a table the
+     reader has to scroll sideways to read defeats the point on a boat. */
+  @media (max-width: 480px) {
+    .card { padding: 12px 8px 14px; }
+    /* SHORT_MOBILE 3-letter place codes (see script) never need to wrap, so
+       a plain single-line layout fits without the auto-layout column-width
+       fight that a longer label would force. */
+    table.data-table { font-size: 11px; }
+    table.data-table th, table.data-table td { padding: 4px 5px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- NEW AREA/DATES: every string in this <header> is hardcoded to this
+       trip -- <title> above in <head> too. Dates/places aren't pulled from
+       the JSON payload here since this is static shell markup, not JS. -->
+  <header class="top">
+    <div>
+      <p class="eyebrow">North Aegean &middot; sailing forecast</p>
+      <h1>Thassos &middot; Samothrace &middot; Lemnos</h1>
+      <p class="route">3&ndash;10 October 2026 &middot; Keramoti, Samothrace, Lemnos, Thracian Sea, Gulf of Saros, Agios Efstratios</p>
+    </div>
+    <div class="run-badge">
+      data captured<br><span class="stamp mono" id="run-stamp">&mdash;</span>
+    </div>
+  </header>
+
+  <section class="status-strip" id="status-strip"></section>
+
+  <main id="cards"></main>
+
+  <!-- Otherwise area-agnostic -- only touch this if you also rename the
+       script file itself away from aegean_forecast.py. -->
+  <footer class="foot">
+    <p><b>Sources:</b> ECMWF EC46 sub-seasonal ensemble mean, medium-range consensus of ECMWF IFS / NOAA GFS /
+    DWD ICON, sea state from Open-Meteo Marine, and synoptic charts from charts.ecmwf.int &mdash; all via
+    <b>aegean_forecast.py</b>. Each place uses its nearest sea grid cell, not land.</p>
+    <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
+    day-by-day forecast. Rows show the region's actual spread (sheltered vs. exposed spots), never a single
+    averaged number, since this route crosses both. This page regenerates automatically on every run.</p>
+  </footer>
+
+</div>
+
+<script id="dashboard-data" type="application/json">
+{"dates": ["2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"], "runStamp": "2026-09-03T10:10+03:00", "places": ["Keramoti / Thassos", "Samothrace (S coast)", "Lemnos (Myrina)", "Thracian Sea (open water)", "Gulf of Saros (E of Samothrace)", "Agios Efstratios (S of Lemnos)"], "tiers": [{"name": "EC46 extended range", "state": "live", "note": "51-member ensemble mean"}, {"name": "Medium-range consensus", "state": "pending", "note": "opens ~2026-09-18"}, {"name": "Sea state", "state": "pending", "note": "opens ~2026-09-18"}, {"name": "ECMWF synoptic charts", "state": "pending", "note": "opens ~9-10 days out"}], "params": {"wind_mean": {"available": true, "label": "Wind (mean)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos": [4.8, 4.2, 2.9, 3.1, 4.2, 4.3, 3.5, 3.6], "Samothrace (S coast)": [7.8, 7.2, 5.0, 5.4, 6.9, 6.6, 4.8, 5.0], "Lemnos (Myrina)": [10.6, 10.1, 8.2, 8.0, 10.1, 9.0, 6.9, 7.3], "Thracian Sea (open water)": [6.2, 5.6, 4.0, 4.2, 5.6, 5.6, 4.3, 4.4], "Gulf of Saros (E of Samothrace)": [5.4, 5.1, 3.6, 3.6, 4.5, 4.1, 2.8, 3.3], "Agios Efstratios (S of Lemnos)": [10.1, 9.7, 7.9, 7.5, 9.4, 8.1, 6.3, 6.9]}, "tripExtremes": {"lowValue": 2.8, "lowPlace": "Gulf of Saros (E of Samothrace)", "highValue": 10.6, "highPlace": "Lemnos (Myrina)"}, "placeRange": {"Keramoti / Thassos": [2.9, 4.8], "Samothrace (S coast)": [4.8, 7.8], "Lemnos (Myrina)": [6.9, 10.6], "Thracian Sea (open water)": [4.0, 6.2], "Gulf of Saros (E of Samothrace)": [2.8, 5.4], "Agios Efstratios (S of Lemnos)": [6.3, 10.1]}, "sourceLabel": "EC46 ensemble mean"}, "gust": {"available": true, "label": "Gust (max)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos": [14.2, 13.4, 11.7, 12.4, 13.6, 12.6, 12.2, 12.1], "Samothrace (S coast)": [18.5, 17.9, 15.6, 17.9, 19.6, 17.9, 17.5, 17.5], "Lemnos (Myrina)": [22.7, 21.4, 19.2, 21.0, 23.1, 20.6, 21.6, 21.6], "Thracian Sea (open water)": [16.5, 15.4, 13.0, 14.8, 16.5, 14.4, 14.4, 14.4], "Gulf of Saros (E of Samothrace)": [14.8, 14.0, 13.2, 14.2, 14.8, 13.6, 14.2, 13.0], "Agios Efstratios (S of Lemnos)": [22.0, 20.0, 18.3, 20.4, 21.6, 19.6, 20.6, 20.6]}, "tripExtremes": {"lowValue": 11.7, "lowPlace": "Keramoti / Thassos", "highValue": 23.1, "highPlace": "Lemnos (Myrina)"}, "placeRange": {"Keramoti / Thassos": [11.7, 14.2], "Samothrace (S coast)": [15.6, 19.6], "Lemnos (Myrina)": [19.2, 23.1], "Thracian Sea (open water)": [13.0, 16.5], "Gulf of Saros (E of Samothrace)": [13.0, 14.8], "Agios Efstratios (S of Lemnos)": [18.3, 22.0]}, "sourceLabel": "EC46 ensemble mean"}, "rain": {"available": true, "label": "Rain", "unit": "mm", "decimals": 1, "series": {"Keramoti / Thassos": [1.8, 2.5, 0.8, 1.2, 2.1, 1.6, 2.6, 2.4], "Samothrace (S coast)": [1.7, 2.2, 1.0, 2.3, 1.9, 2.0, 2.1, 3.0], "Lemnos (Myrina)": [2.5, 1.4, 1.0, 1.0, 1.4, 2.7, 3.2, 2.6], "Thracian Sea (open water)": [1.4, 2.2, 0.8, 1.3, 1.4, 1.3, 2.3, 2.3], "Gulf of Saros (E of Samothrace)": [1.6, 2.0, 1.0, 2.3, 2.6, 3.4, 2.7, 3.4], "Agios Efstratios (S of Lemnos)": [2.6, 1.6, 1.0, 0.8, 0.9, 1.9, 2.8, 2.2]}, "tripExtremes": {"lowValue": 0.8, "lowPlace": "Keramoti / Thassos", "highValue": 3.4, "highPlace": "Gulf of Saros (E of Samothrace)"}, "placeRange": {"Keramoti / Thassos": [0.8, 2.6], "Samothrace (S coast)": [1.0, 3.0], "Lemnos (Myrina)": [1.0, 3.2], "Thracian Sea (open water)": [0.8, 2.3], "Gulf of Saros (E of Samothrace)": [1.0, 3.4], "Agios Efstratios (S of Lemnos)": [0.8, 2.8]}, "sourceLabel": "EC46 ensemble mean"}, "temp_lo": {"available": true, "label": "Temp (low)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos": [20.4, 20.7, 20.7, 20.3, 19.7, 20.0, 20.2, 19.9], "Samothrace (S coast)": [19.9, 19.8, 19.9, 19.5, 18.8, 19.1, 19.5, 19.2], "Lemnos (Myrina)": [19.9, 19.7, 19.6, 19.7, 19.3, 19.4, 19.6, 19.6], "Thracian Sea (open water)": [20.9, 21.0, 21.1, 20.6, 20.0, 20.3, 20.5, 20.3], "Gulf of Saros (E of Samothrace)": [17.4, 17.5, 17.1, 17.0, 16.4, 16.4, 16.8, 16.7], "Agios Efstratios (S of Lemnos)": [20.3, 20.3, 20.1, 20.2, 19.9, 19.9, 20.1, 20.2]}, "tripExtremes": {"lowValue": 16.4, "lowPlace": "Gulf of Saros (E of Samothrace)", "highValue": 21.1, "highPlace": "Thracian Sea (open water)"}, "placeRange": {"Keramoti / Thassos": [19.7, 20.7], "Samothrace (S coast)": [18.8, 19.9], "Lemnos (Myrina)": [19.3, 19.9], "Thracian Sea (open water)": [20.0, 21.1], "Gulf of Saros (E of Samothrace)": [16.4, 17.5], "Agios Efstratios (S of Lemnos)": [19.9, 20.3]}, "sourceLabel": "EC46 ensemble mean"}, "temp_hi": {"available": true, "label": "Temp (high)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos": [23.2, 23.0, 22.7, 22.7, 22.3, 22.0, 22.3, 22.0], "Samothrace (S coast)": [23.0, 23.0, 22.5, 22.4, 22.1, 21.9, 21.9, 21.7], "Lemnos (Myrina)": [21.6, 21.5, 21.2, 21.2, 21.0, 21.0, 21.0, 20.9], "Thracian Sea (open water)": [23.5, 23.4, 22.9, 23.0, 22.7, 22.4, 22.6, 22.3], "Gulf of Saros (E of Samothrace)": [23.4, 23.1, 22.7, 22.6, 22.5, 21.7, 21.9, 21.8], "Agios Efstratios (S of Lemnos)": [22.0, 22.0, 21.6, 21.6, 21.5, 21.4, 21.4, 21.3]}, "tripExtremes": {"lowValue": 20.9, "lowPlace": "Lemnos (Myrina)", "highValue": 23.5, "highPlace": "Thracian Sea (open water)"}, "placeRange": {"Keramoti / Thassos": [22.0, 23.2], "Samothrace (S coast)": [21.7, 23.0], "Lemnos (Myrina)": [20.9, 21.6], "Thracian Sea (open water)": [22.3, 23.5], "Gulf of Saros (E of Samothrace)": [21.7, 23.4], "Agios Efstratios (S of Lemnos)": [21.3, 22.0]}, "sourceLabel": "EC46 ensemble mean"}, "wind_dir": {"available": true, "type": "direction", "label": "Wind direction", "unit": "", "series": {"Keramoti / Thassos": ["NE", "ENE", "ENE", "ENE", "NE", "NE", "ENE", "ENE"], "Samothrace (S coast)": ["NE", "NE", "NE", "NE", "NE", "NE", "ENE", "NE"], "Lemnos (Myrina)": ["NE", "NE", "NE", "NE", "NE", "NE", "NE", "NE"], "Thracian Sea (open water)": ["NE", "NE", "NE", "NE", "NE", "NE", "ENE", "ENE"], "Gulf of Saros (E of Samothrace)": ["NE", "NE", "NE", "NE", "NE", "NE", "NE", "NE"], "Agios Efstratios (S of Lemnos)": ["NE", "NNE", "NE", "NNE", "NE", "NE", "NE", "NE"]}, "predominant": {"Keramoti / Thassos": "ENE", "Samothrace (S coast)": "NE", "Lemnos (Myrina)": "NE", "Thracian Sea (open water)": "NE", "Gulf of Saros (E of Samothrace)": "NE", "Agios Efstratios (S of Lemnos)": "NE"}, "sourceLabel": "EC46 ensemble mean"}, "wave": {"available": false, "label": "Wave height", "unit": "m", "opensNote": "Sea state opens ~2026-09-18 — rerun the forecast script closer to the trip"}, "period": {"available": false, "label": "Wave period", "unit": "s", "opensNote": "Sea state opens ~2026-09-18 — rerun the forecast script closer to the trip"}, "wave_dir": {"available": false, "label": "Wave direction", "unit": "", "opensNote": "Sea state opens ~2026-09-18 — rerun the forecast script closer to the trip"}}}
+</script>
+
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("dashboard-data").textContent);
+  const PLACES = DATA.places;
+  const PLACE_VAR = {};
+  PLACES.forEach((p, i) => { PLACE_VAR[p] = `var(--place-${i + 1})`; });
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const PARAM_ORDER = ["wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period"];
+  // === NEW AREA: re-key both maps below to the new SPOTS names verbatim
+  // (Python's dict keys, exactly). Any place missing from these maps prints
+  // "undefined" in headers/legend/tooltip instead of failing loudly, so
+  // don't leave a stale key behind. ==========================================
+  // Short forms for table headers / legend / tooltip -- the six full names
+  // (with parentheticals) don't fit six-wide without forcing a scroll every
+  // card. Full names stay in the header route line and in each place's
+  // title attribute.
+  const SHORT = {
+    "Keramoti / Thassos": "Keramoti",
+    "Samothrace (S coast)": "Samothrace",
+    "Lemnos (Myrina)": "Lemnos",
+    "Thracian Sea (open water)": "Thracian Sea",
+    "Gulf of Saros (E of Samothrace)": "Gulf of Saros",
+    "Agios Efstratios (S of Lemnos)": "Ag. Efstratios",
+  };
+  // Phone portrait (<=480px): even the SHORT labels above don't fit six-wide
+  // without forced mid-word wrapping ("SAMOTH-RACE"), which reads as broken
+  // rather than tight. Fixed 3-letter codes never need to wrap at all.
+  const SHORT_MOBILE = {
+    "Keramoti / Thassos": "Ker",
+    "Samothrace (S coast)": "Sam",
+    "Lemnos (Myrina)": "Lem",
+    "Thracian Sea (open water)": "Thr",
+    "Gulf of Saros (E of Samothrace)": "Sar",
+    "Agios Efstratios (S of Lemnos)": "Efs",
+  };
+  // ==============================================================================
+  const LABELS = window.matchMedia("(max-width: 480px)").matches ? SHORT_MOBILE : SHORT;
+
+  function dateLabel(iso, first) {
+    const parts = iso.split("-").map(Number);
+    const d = parts[2], m = parts[1];
+    return first ? `${d} ${MONTHS[m - 1]}` : String(d);
+  }
+  function fmtStamp(iso) {
+    const [datePart, timePart] = iso.split("T");
+    const [y, m, d] = datePart.split("-").map(Number);
+    const hm = timePart.slice(0, 5);
+    return `${d} ${MONTHS[m - 1]} ${y}, ${hm} Athens time`;
+  }
+  function niceScale(min, max) {
+    if (min === max) { min -= 1; max += 1; }
+    const range = max - min;
+    const roughStep = range / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
+    const norm = roughStep / mag;
+    const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+    const niceMin = Math.floor(min / step) * step;
+    let niceMax = Math.ceil(max / step) * step;
+    if (niceMax === niceMin) niceMax += step;
+    const ticks = [];
+    for (let t = niceMin; t <= niceMax + 1e-9; t += step) ticks.push(Math.round(t * 100) / 100);
+    return { niceMin, niceMax, ticks, step };
+  }
+  function fmt(v, decimals) {
+    return v === null || v === undefined ? "–" : v.toFixed(decimals);
+  }
+  function extremeWords(key) {
+    if (key === "rain") return ["least", "most"];
+    if (key === "wave") return ["calmest", "biggest"];
+    if (key === "period") return ["shortest", "longest"];
+    if (key.indexOf("temp") === 0) return ["coolest", "warmest"];
+    if (key === "gust") return ["calmest", "gustiest"];
+    return ["calmest", "windiest"];
+  }
+
+  const SVGNS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function buildStatusStrip() {
+    const strip = document.getElementById("status-strip");
+    (DATA.tiers || []).forEach(t => {
+      const chip = document.createElement("div");
+      chip.className = "status-chip " + (t.state === "live" ? "live" : "pending");
+      const name = document.createElement("span");
+      name.className = "tier-name";
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      name.appendChild(dot);
+      name.appendChild(document.createTextNode(t.name));
+      chip.appendChild(name);
+      const state = document.createElement("span");
+      state.className = "tier-state";
+      state.textContent = t.note;
+      chip.appendChild(state);
+      strip.appendChild(chip);
+    });
+  }
+
+  function buildTable(param) {
+    const table = document.createElement("table");
+    table.className = "data-table";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    const hDate = document.createElement("th");
+    hDate.textContent = "Date";
+    hr.appendChild(hDate);
+    PLACES.forEach(p => {
+      const th = document.createElement("th");
+      th.textContent = LABELS[p];
+      th.title = p;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    DATA.dates.forEach((date, i) => {
+      const tr = document.createElement("tr");
+      const tdDate = document.createElement("td");
+      tdDate.textContent = dateLabel(date, i === 0);
+      tr.appendChild(tdDate);
+      PLACES.forEach(p => {
+        const td = document.createElement("td");
+        td.textContent = fmt(param.series[p][i], param.decimals);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    // One cell per PLACE (column) -- that place's own min-max across the
+    // week. (The grid's rows already show the day-to-day spread across
+    // places; this row instead shows each place's own week-to-week spread.)
+    const rangeRow = document.createElement("tr");
+    const rangeLabel = document.createElement("td");
+    rangeLabel.textContent = "Range";
+    rangeRow.appendChild(rangeLabel);
+    PLACES.forEach(p => {
+      const pair = param.placeRange[p];
+      const td = document.createElement("td");
+      td.textContent = pair ? `${fmt(pair[0], param.decimals)}–${fmt(pair[1], param.decimals)}` : "–";
+      rangeRow.appendChild(td);
+    });
+    tbody.appendChild(rangeRow);
+    table.appendChild(tbody);
+
+    const scroll = document.createElement("div");
+    scroll.className = "table-scroll";
+    scroll.appendChild(table);
+    return scroll;
+  }
+
+  function buildChart(param, tooltipEl) {
+    const W = 720, H = 260, padL = 34, padR = 14, padT = 14, padB = 26;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const n = DATA.dates.length;
+    const xStep = n > 1 ? plotW / (n - 1) : 0;
+    const x = i => padL + i * xStep;
+
+    let allVals = [];
+    PLACES.forEach(p => param.series[p].forEach(v => { if (v !== null && v !== undefined) allVals.push(v); }));
+    const { niceMin, niceMax, ticks } = niceScale(Math.min(...allVals), Math.max(...allVals));
+    const y = v => padT + plotH - ((v - niceMin) / (niceMax - niceMin)) * plotH;
+
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img" });
+
+    ticks.forEach(t => {
+      const yy = y(t);
+      svg.appendChild(el("line", { x1: padL, x2: W - padR, y1: yy.toFixed(1), y2: yy.toFixed(1), class: "gridline" }));
+      const label = el("text", { x: padL - 6, y: (yy + 3.5).toFixed(1), class: "axis-label", "text-anchor": "end" });
+      label.textContent = String(t);
+      svg.appendChild(label);
+    });
+
+    DATA.dates.forEach((d, i) => {
+      const label = el("text", {
+        x: x(i).toFixed(1), y: H - 6, class: "axis-label",
+        "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle",
+      });
+      label.textContent = dateLabel(d, i === 0);
+      svg.appendChild(label);
+    });
+
+    const dots = {};
+    PLACES.forEach(place => {
+      const vals = param.series[place];
+      let d = "";
+      vals.forEach((v, i) => {
+        if (v === null || v === undefined) return;
+        d += (d ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1) + " ";
+      });
+      const path = el("path", { d: d.trim(), class: "series-line", stroke: PLACE_VAR[place] });
+      svg.appendChild(path);
+
+      const rowDots = [];
+      vals.forEach((v, i) => {
+        if (v === null || v === undefined) return;
+        const isLast = i === n - 1;
+        const c = el("circle", {
+          cx: x(i).toFixed(1), cy: y(v).toFixed(1), r: isLast ? 4.5 : 3, class: "end-dot",
+          fill: PLACE_VAR[place], opacity: isLast ? "1" : "0",
+        });
+        svg.appendChild(c);
+        rowDots[i] = c;
+      });
+      dots[place] = rowDots;
+    });
+
+    const crosshair = el("line", { x1: 0, x2: 0, y1: padT, y2: H - padB, class: "crosshair" });
+    svg.appendChild(crosshair);
+
+    const hoverRect = el("rect", { x: padL, y: padT, width: plotW, height: plotH, class: "hover-rect" });
+    svg.appendChild(hoverRect);
+
+    function showAt(idx) {
+      const cx = x(idx);
+      crosshair.setAttribute("x1", cx.toFixed(1));
+      crosshair.setAttribute("x2", cx.toFixed(1));
+      crosshair.style.opacity = "1";
+      PLACES.forEach(place => {
+        (dots[place] || []).forEach((c, i) => { if (c) c.setAttribute("opacity", i === idx ? "1" : "0"); });
+      });
+
+      tooltipEl.innerHTML = "";
+      const dateRow = document.createElement("div");
+      dateRow.className = "t-date";
+      dateRow.textContent = dateLabel(DATA.dates[idx], idx === 0) + (idx === 0 ? "" : " Oct");
+      tooltipEl.appendChild(dateRow);
+
+      const ranked = PLACES
+        .map(p => ({ place: p, val: param.series[p][idx] }))
+        .filter(r => r.val !== null && r.val !== undefined)
+        .sort((a, b) => b.val - a.val);
+      ranked.forEach(r => {
+        const row = document.createElement("div");
+        row.className = "t-row";
+        const key = document.createElement("span");
+        key.className = "t-key";
+        const sw = document.createElement("span");
+        sw.className = "t-swatch";
+        sw.style.background = PLACE_VAR[r.place];
+        key.appendChild(sw);
+        const name = document.createElement("span");
+        name.textContent = LABELS[r.place];
+        key.appendChild(name);
+        row.appendChild(key);
+        const val = document.createElement("span");
+        val.className = "t-val";
+        val.textContent = fmt(r.val, param.decimals) + " " + param.unit;
+        row.appendChild(val);
+        tooltipEl.appendChild(row);
+      });
+
+      const wrap = svg.closest(".chart-wrap");
+      const rect = svg.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      const px = rect.left - wrapRect.left + (cx / W) * rect.width;
+      tooltipEl.style.opacity = "1";
+      tooltipEl.style.left = Math.min(Math.max(px - 80, 0), wrapRect.width - 180) + "px";
+      tooltipEl.style.top = "4px";
+    }
+    function hide() {
+      crosshair.style.opacity = "0";
+      PLACES.forEach(place => (dots[place] || []).forEach((c, i) => { if (c) c.setAttribute("opacity", i === n - 1 ? "1" : "0"); }));
+      tooltipEl.style.opacity = "0";
+    }
+    function onMove(evt) {
+      const rect = svg.getBoundingClientRect();
+      const relX = ((evt.clientX - rect.left) / rect.width) * W;
+      let idx = Math.round((relX - padL) / (xStep || 1));
+      idx = Math.max(0, Math.min(n - 1, idx));
+      showAt(idx);
+    }
+    hoverRect.addEventListener("pointermove", onMove);
+    hoverRect.addEventListener("pointerleave", hide);
+    hoverRect.addEventListener("pointerdown", onMove);
+
+    return svg;
+  }
+
+  function buildLegend(param) {
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    PLACES.forEach(place => {
+      const vals = param.series[place];
+      const last = vals[vals.length - 1];
+      const item = document.createElement("span");
+      item.className = "legend-item";
+      item.title = place;
+      const key = document.createElement("span");
+      key.className = "legend-key";
+      key.style.background = PLACE_VAR[place];
+      item.appendChild(key);
+      const name = document.createElement("span");
+      name.textContent = LABELS[place];
+      item.appendChild(name);
+      const val = document.createElement("span");
+      val.className = "val";
+      val.textContent = fmt(last, param.decimals) + " " + param.unit;
+      item.appendChild(val);
+      legend.appendChild(item);
+    });
+    return legend;
+  }
+
+  function tableIcon() {
+    return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.2"/><line x1="1.5" y1="6.3" x2="14.5" y2="6.3"/><line x1="1.5" y1="10" x2="14.5" y2="10"/><line x1="6.2" y1="2.5" x2="6.2" y2="13.5"/></svg>`;
+  }
+  function chartIcon() {
+    return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5L6 7l3 2.5L14 3.5"/><circle cx="14" cy="3.5" r="1.1" fill="currentColor" stroke="none"/></svg>`;
+  }
+
+  function buildCard(key, param) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = param.label;
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = param.unit + " · " + param.sourceLabel + ", 3–10 Oct";
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+
+    const toggle = document.createElement("div");
+    toggle.className = "view-toggle";
+    const btnTable = document.createElement("button");
+    btnTable.setAttribute("aria-pressed", "true");
+    btnTable.setAttribute("aria-label", "Table view");
+    btnTable.innerHTML = tableIcon();
+    const btnChart = document.createElement("button");
+    btnChart.setAttribute("aria-pressed", "false");
+    btnChart.setAttribute("aria-label", "Chart view");
+    btnChart.innerHTML = chartIcon();
+    toggle.appendChild(btnTable);
+    toggle.appendChild(btnChart);
+    head.appendChild(toggle);
+    card.appendChild(head);
+
+    const tableView = buildTable(param);
+    card.appendChild(tableView);
+
+    const chartView = document.createElement("div");
+    chartView.className = "chart-wrap";
+    chartView.hidden = true;
+    const tooltip = document.createElement("div");
+    tooltip.className = "tooltip";
+    const svg = buildChart(param, tooltip);
+    chartView.appendChild(svg);
+    chartView.appendChild(tooltip);
+    chartView.appendChild(buildLegend(param));
+    card.appendChild(chartView);
+
+    btnTable.addEventListener("click", () => {
+      btnTable.setAttribute("aria-pressed", "true");
+      btnChart.setAttribute("aria-pressed", "false");
+      tableView.hidden = false;
+      chartView.hidden = true;
+    });
+    btnChart.addEventListener("click", () => {
+      btnTable.setAttribute("aria-pressed", "false");
+      btnChart.setAttribute("aria-pressed", "true");
+      tableView.hidden = true;
+      chartView.hidden = false;
+    });
+
+    const caption = document.createElement("p");
+    caption.className = "range-caption";
+    const ext = param.tripExtremes;
+    const [lowWord, highWord] = extremeWords(key);
+    if (ext) {
+      caption.innerHTML = `Over the week: <b>${ext.lowPlace}</b> ${lowWord} at <b>${fmt(ext.lowValue, param.decimals)} ${param.unit}</b> &nbsp;&ndash;&nbsp; <b>${ext.highPlace}</b> ${highWord} at <b>${fmt(ext.highValue, param.decimals)} ${param.unit}</b>.`;
+      card.appendChild(caption);
+    }
+
+    return card;
+  }
+
+  function buildDirectionCard(param) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = param.label;
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = param.sourceLabel + ", 3–10 Oct";
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    const table = document.createElement("table");
+    table.className = "data-table";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    const hDate = document.createElement("th");
+    hDate.textContent = "Date";
+    hr.appendChild(hDate);
+    PLACES.forEach(p => {
+      const th = document.createElement("th");
+      th.textContent = LABELS[p];
+      th.title = p;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    DATA.dates.forEach((date, i) => {
+      const tr = document.createElement("tr");
+      const tdDate = document.createElement("td");
+      tdDate.textContent = dateLabel(date, i === 0);
+      tr.appendChild(tdDate);
+      PLACES.forEach(p => {
+        const td = document.createElement("td");
+        td.textContent = param.series[p][i] || "–";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    // Compass bearings don't min-max the way a magnitude does -- the
+    // week-to-week summary is each place's own circular-mean predominant
+    // direction, precomputed in Python and shipped as plain text.
+    const predRow = document.createElement("tr");
+    const predLabel = document.createElement("td");
+    predLabel.textContent = "Predominant";
+    predRow.appendChild(predLabel);
+    PLACES.forEach(p => {
+      const td = document.createElement("td");
+      td.textContent = param.predominant[p] || "–";
+      predRow.appendChild(td);
+    });
+    tbody.appendChild(predRow);
+    table.appendChild(tbody);
+
+    const scroll = document.createElement("div");
+    scroll.className = "table-scroll";
+    scroll.appendChild(table);
+    card.appendChild(scroll);
+    return card;
+  }
+
+  function buildPlaceholder(param) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = param.label;
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = param.unit;
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "placeholder-body";
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    body.appendChild(dot);
+    const text = document.createElement("span");
+    text.textContent = param.opensNote;
+    body.appendChild(text);
+    card.appendChild(body);
+    return card;
+  }
+
+  buildStatusStrip();
+
+  const cardsEl = document.getElementById("cards");
+  PARAM_ORDER.forEach(key => {
+    const param = DATA.params[key];
+    if (!param) return;
+    if (!param.available) {
+      cardsEl.appendChild(buildPlaceholder(param));
+    } else if (param.type === "direction") {
+      cardsEl.appendChild(buildDirectionCard(param));
+    } else {
+      cardsEl.appendChild(buildCard(key, param));
+    }
+  });
+
+  document.getElementById("run-stamp").textContent = fmtStamp(DATA.runStamp);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Secrets -- never commit these
+edgeone_token.txt
+tencentcloud_credentials.env
+
+# Regenerable
+node_modules/
+__pycache__/
+.edgeone/
+
+# Local-machine-specific, not relevant to the repo
+cron.log
+
+# Ephemeral per-run ECMWF chart PNGs -- regenerate every run, would bloat
+# history; not durable data like runs.csv
+charts/
