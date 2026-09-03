@@ -20,12 +20,14 @@
     --accent:         #2a78d6;
     --accent-wash:    rgba(42,120,214,0.10);
     --status-good:    #0ca30c;
+    --map-sea:        #c2d4d8;
     --place-1: #2a78d6;
     --place-2: #eb6834;
     --place-3: #1baf7a;
     --place-4: #eda100;
     --place-5: #e87ba4;
     --place-6: #008300;
+    --place-7: #8659c9;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -41,12 +43,14 @@
       --accent:         #3987e5;
       --accent-wash:    rgba(57,135,229,0.14);
       --status-good:    #0ca30c;
+      --map-sea:        #12232b;
       --place-1: #3987e5;
       --place-2: #d95926;
       --place-3: #199e70;
       --place-4: #c98500;
       --place-5: #d55181;
       --place-6: #008300;
+      --place-7: #a67ee0;
     }
   }
   :root[data-theme="dark"] {
@@ -62,12 +66,14 @@
     --accent:         #3987e5;
     --accent-wash:    rgba(57,135,229,0.14);
     --status-good:    #0ca30c;
+    --map-sea:        #12232b;
     --place-1: #3987e5;
     --place-2: #d95926;
     --place-3: #199e70;
     --place-4: #c98500;
     --place-5: #d55181;
     --place-6: #008300;
+    --place-7: #a67ee0;
   }
 
   * { box-sizing: border-box; }
@@ -101,6 +107,19 @@
   .route { color: var(--ink-secondary); font-size: 16px; margin: 6px 0 0; }
   .run-badge { text-align: right; font-size: 13px; color: var(--ink-muted); }
   .run-badge .stamp { color: var(--ink-secondary); font-weight: 500; }
+
+  .map-card {
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px; margin-bottom: 18px; overflow: hidden;
+  }
+  .map-card svg { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .map-sea { fill: var(--map-sea); }
+  .map-coast { fill: none; stroke: var(--ink-muted); stroke-width: 1; stroke-linejoin: round; }
+  .map-pin { stroke: var(--surface-card); stroke-width: 1.5; }
+  .map-pin-label {
+    font-family: "Public Sans", sans-serif; font-size: 11px; font-weight: 600;
+    fill: var(--ink-primary); paint-order: stroke; stroke: var(--surface-card); stroke-width: 3;
+  }
 
   .status-strip {
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
@@ -239,12 +258,17 @@
     <div>
       <p class="eyebrow">North Aegean &middot; sailing forecast</p>
       <h1>Thassos &middot; Samothrace &middot; Lemnos</h1>
-      <p class="route">3&ndash;10 October 2026 &middot; Keramoti, Samothrace, Lemnos, Thracian Sea, Gulf of Saros, Agios Efstratios</p>
+      <p class="route">3&ndash;10 October 2026 &middot; Keramoti, Samothrace, Lemnos, Thracian Sea, Gulf of Saros, Agios Efstratios, Mount Athos</p>
     </div>
     <div class="run-badge">
       data captured<br><span class="stamp mono" id="run-stamp">&mdash;</span>
     </div>
   </header>
+
+  <!-- NEW AREA: real coastline, built once by fetch_coastline.py (not
+       regenerated per forecast run) -- rerun that script after SPOTS
+       changes. Renders nothing if coastline.json doesn't exist yet. -->
+  <section class="map-card" id="map-card" hidden></section>
 
   <section class="status-strip" id="status-strip"></section>
 
@@ -267,10 +291,17 @@
 __DASHBOARD_DATA_JSON__
 </script>
 
+<!-- NEW AREA: null until fetch_coastline.py has been run for this area's
+     SPOTS -- see that script's docstring. -->
+<script id="coastline-data" type="application/json">
+__COASTLINE_DATA_JSON__
+</script>
+
 <script>
 (function () {
   "use strict";
   const DATA = JSON.parse(document.getElementById("dashboard-data").textContent);
+  const COASTLINE = JSON.parse(document.getElementById("coastline-data").textContent);
   const PLACES = DATA.places;
   const PLACE_VAR = {};
   PLACES.forEach((p, i) => { PLACE_VAR[p] = `var(--place-${i + 1})`; });
@@ -291,6 +322,7 @@ __DASHBOARD_DATA_JSON__
     "Thracian Sea (open water)": "Thracian Sea",
     "Gulf of Saros (E of Samothrace)": "Gulf of Saros",
     "Agios Efstratios (S of Lemnos)": "Ag. Efstratios",
+    "Mount Athos (N approach)": "Mount Athos",
   };
   // Phone portrait (<=480px): even the SHORT labels above don't fit six-wide
   // without forced mid-word wrapping ("SAMOTH-RACE"), which reads as broken
@@ -302,6 +334,7 @@ __DASHBOARD_DATA_JSON__
     "Thracian Sea (open water)": "Thr",
     "Gulf of Saros (E of Samothrace)": "Sar",
     "Agios Efstratios (S of Lemnos)": "Efs",
+    "Mount Athos (N approach)": "Ath",
   };
   // ==============================================================================
   const LABELS = window.matchMedia("(max-width: 480px)").matches ? SHORT_MOBILE : SHORT;
@@ -348,6 +381,37 @@ __DASHBOARD_DATA_JSON__
     const e = document.createElementNS(SVGNS, tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
     return e;
+  }
+
+  function buildMap() {
+    const card = document.getElementById("map-card");
+    if (!COASTLINE) return; // stays hidden -- new area, fetch_coastline.py not run yet
+
+    const [minlon, minlat, maxlon, maxlat] = COASTLINE.bbox;
+    const W = 640;
+    const H = W * (maxlat - minlat) / ((maxlon - minlon) * Math.cos((minlat + maxlat) / 2 * Math.PI / 180));
+    const x = lon => (lon - minlon) / (maxlon - minlon) * W;
+    const y = lat => H - (lat - minlat) / (maxlat - minlat) * H;
+
+    const svg = el("svg", { viewBox: `0 0 ${W.toFixed(0)} ${H.toFixed(0)}`, role: "img", "aria-label": "Map of the trip area" });
+    svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, class: "map-sea" }));
+    COASTLINE.lines.forEach(line => {
+      const d = line.map((pt, i) => (i ? "L" : "M") + x(pt[0]).toFixed(1) + " " + y(pt[1]).toFixed(1)).join(" ");
+      svg.appendChild(el("path", { d, class: "map-coast" }));
+    });
+    PLACES.forEach(place => {
+      const pin = COASTLINE.pins[place];
+      if (!pin) return; // place added to SPOTS since fetch_coastline.py last ran
+      const [lat, lon] = pin;
+      const cx = x(lon), cy = y(lat);
+      svg.appendChild(el("circle", { cx: cx.toFixed(1), cy: cy.toFixed(1), r: 5, class: "map-pin", fill: PLACE_VAR[place] }));
+      const label = el("text", { x: (cx + 7).toFixed(1), y: (cy + 3.5).toFixed(1), class: "map-pin-label" });
+      label.textContent = LABELS[place];
+      svg.appendChild(label);
+    });
+
+    card.appendChild(svg);
+    card.hidden = false;
   }
 
   function buildStatusStrip() {
@@ -751,6 +815,7 @@ __DASHBOARD_DATA_JSON__
     return card;
   }
 
+  buildMap();
   buildStatusStrip();
 
   const cardsEl = document.getElementById("cards");

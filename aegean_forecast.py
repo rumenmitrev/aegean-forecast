@@ -64,6 +64,10 @@ CHART_PROJECTION = "opencharts_south_east_europe"
 # ==============================================================================
 CHARTS_DIR = pathlib.Path(__file__).resolve().parent / "charts"
 RUNS_CSV = pathlib.Path(__file__).resolve().parent / "runs.csv"
+# Real OSM coastline for the map card -- built once per area by
+# fetch_coastline.py, not regenerated on every forecast run (unlike
+# everything else write_dashboard embeds).
+COASTLINE_JSON = pathlib.Path(__file__).resolve().parent / "coastline.json"
 DASHBOARD_TEMPLATE = pathlib.Path(__file__).resolve().parent / "dashboard_template.html"
 DASHBOARD_OUT = pathlib.Path(__file__).resolve().parent / "dashboard.html"
 # EdgeOne Pages publish: a dedicated site/ dir (index.html only, not the repo)
@@ -106,6 +110,7 @@ SPOTS = {
     "Thracian Sea (open water)": (40.45, 25.10),
     "Gulf of Saros (E of Samothrace)": (40.55, 26.40),
     "Agios Efstratios (S of Lemnos)": (39.50, 24.98),
+    "Mount Athos (N approach)": (40.55, 24.182),
 }
 # ==============================================================================
 PLACE_WIDTH = max(len(n) for n in SPOTS) + 2
@@ -626,7 +631,9 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
 
 def write_dashboard(payload):
     template = DASHBOARD_TEMPLATE.read_text(encoding="utf-8")
+    coastline = COASTLINE_JSON.read_text(encoding="utf-8") if COASTLINE_JSON.exists() else "null"
     html = template.replace("__DASHBOARD_DATA_JSON__", json.dumps(payload, ensure_ascii=False))
+    html = html.replace("__COASTLINE_DATA_JSON__", coastline)
     DASHBOARD_OUT.write_text(html, encoding="utf-8")
     # Separate publish dir with only index.html -- deploying SITE_DIR (not the
     # repo root) keeps runs.csv / the script / the token file off the public site.
