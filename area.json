@@ -116,12 +116,12 @@
   // beyond that, extend dashboard_template.html's PALETTE_LIGHT/
   // PALETTE_DARK color arrays (see README.md).
   "spots": [
-    {"name": "Keramoti / Thassos", "lat": 40.85, "lon": 24.70, "short": "Keramoti", "short_mobile": "Ker"},
-    {"name": "Samothrace (S coast)", "lat": 40.21, "lon": 25.37, "short": "Samothrace", "short_mobile": "Sam"},
-    {"name": "West from Lemnos (Myrina)", "lat": 40.12, "lon": 24.71, "short": "Lemnos", "short_mobile": "Lem"},
+    {"name": "Keramoti / Thassos (E of Thassos open water)", "lat": 40.70, "lon": 24.91, "short": "Thassos", "short_mobile": "Tha"},
+    {"name": "Samothrace (S of Samothrace open water)", "lat": 40.21, "lon": 25.37, "short": "Samothrace", "short_mobile": "Sam"},
+    {"name": "West from Lemnos (open water)", "lat": 40.12, "lon": 24.71, "short": "Lemnos", "short_mobile": "Lem"},
     {"name": "Thracian Sea (open water)", "lat": 40.45, "lon": 25.10, "short": "Thracian Sea", "short_mobile": "Thr"},
-    {"name": "Dardaneles (E of Lemnos)", "lat": 39.83, "lon": 25.69, "short": "Dardaneles", "short_mobile": "Dar"},
-    {"name": "Agios Efstratios (S of Lemnos)", "lat": 39.68, "lon": 25.06, "short": "Ag. Efstratios", "short_mobile": "Efs"},
+    {"name": "Dardaneles (E of Lemnos open water)", "lat": 39.83, "lon": 25.69, "short": "Dardaneles", "short_mobile": "Dar"},
+    {"name": "Agios Efstratios (S of Lemnos open water)", "lat": 39.68, "lon": 25.06, "short": "Ag. Efstratios", "short_mobile": "Efs"},
     {"name": "Mount Athos (N approach)", "lat": 40.55, "lon": 24.182, "short": "Mount Athos", "short_mobile": "Ath"}
   ]
 }
