@@ -18,8 +18,8 @@
   // pipeline (which days count as "the trip", the dashboard's "data
   // captured" stamp) AND is passed to Open-Meteo as the API's timezone
   // parameter -- this one field is the only place to change it.
-  "trip_start": "2026-10-03",
-  "trip_end": "2026-10-10",
+  "trip_start": "2026-09-05",
+  "trip_end": "2026-09-10",
   "timezone": "Europe/Athens",
 
   // ---- ECMWF synoptic chart tier (tier 4) -----------------------------------
