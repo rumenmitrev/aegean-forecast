@@ -18,8 +18,8 @@
   // pipeline (which days count as "the trip", the dashboard's "data
   // captured" stamp) AND is passed to Open-Meteo as the API's timezone
   // parameter -- this one field is the only place to change it.
-  "trip_start": "2026-09-05",
-  "trip_end": "2026-09-10",
+  "trip_start": "2026-10-03",
+  "trip_end": "2026-10-09",
   "timezone": "Europe/Athens",
 
   // ---- ECMWF synoptic chart tier (tier 4) -----------------------------------
@@ -40,9 +40,9 @@
   // line shown under them (dates + place list) is generated automatically
   // from trip_start/trip_end and each spot's "short" label below -- nothing
   // to write by hand for that part.
-  "page_title": "Aegean Forecast",
-  "eyebrow": "North Aegean · sailing forecast",
-  "heading": "Thassos · Samothrace · Lemnos",
+  "page_title": "North Aegean Forecast",
+  "eyebrow": "North Aegean · sailing forecast 3-9 Oct",
+  "heading": "Thassos · Samothrace · Lemnos · Athos",
 
   // ---- Medium-range consensus models (tier 2) -------------------------------
   // Which independent models are averaged (wind/temp/rain/direction) or
