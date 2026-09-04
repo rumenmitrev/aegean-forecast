@@ -42,6 +42,15 @@ Progressively sharper picture as the trip approaches:
   ~<=9-10 days  : ECMWF's own official synoptic chart (MSLP + 850 hPa wind) is
                  pulled and saved as PNG per day -- actual fronts/highs/lows,
                  not a derived number. Horizon shifts slightly run to run.
+  ~<=5-6 days   : (tier 5, independent/additive, gated the same as tiers 2-3
+                 but only actually populates once its own short horizon
+                 reaches the trip) HCMR Poseidon's own regional Greek-seas
+                 model (wind + wave, single point, no kernel) -- a second,
+                 unofficial, Greece-specific opinion shown alongside tier 4's
+                 ECMWF chart, not a replacement for tiers 1-3. See the
+                 POSEIDON_* constants below for the real provenance/
+                 stability caveats. Set area.json's poseidon_enabled to
+                 false for a non-Greek area's copy.
 
 Output is one table per calendar day, places as rows, parameters as columns,
 with a RANGE row (never a single area average -- this route spans sheltered
@@ -61,6 +70,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 from zoneinfo import ZoneInfo
 
 import requests
@@ -267,6 +277,202 @@ def kernel_span_km():
     avg_lat = mean([lat for lat, lon in SPOTS.values()])
     span_deg = KERNEL_STEP_DEG * 2
     return span_deg * 111.0, span_deg * 111.0 * math.cos(math.radians(avg_lat))
+
+
+# --------------------------------------- HCMR Poseidon (tier 5, additive) --
+
+# Independent extra source alongside tier 4's ECMWF chart: HCMR's own
+# short-range (empirically ~5-6 days, not published/guaranteed) regional
+# Greek-seas model. Found by reading poseidon.hcmr.gr's own public map page
+# JavaScript (it calls nodejs.hcmr.gr/forB/<model>/<lat>/<lon>) -- NOT from
+# HCMR's published Swagger API (api.poseidon.hcmr.gr/swagger), which only
+# covers OAuth-gated *observational* buoy/station data, no forecasts at all.
+# UNOFFICIAL AND UNDOCUMENTED: there is no published contract, version, or
+# stability guarantee for this endpoint, unlike every other data source in
+# this file. Confirmed live during development that it works with no auth
+# at this project's call volume (7 spots x 2 models, once a run) -- but it
+# could change shape or disappear without notice, which is exactly why this
+# tier is built to fail silently (same try/except-per-spot pattern as every
+# other tier) and why it's kept fully independent of tiers 1-4's code paths.
+# Greece/E.Med-specific by nature (HCMR doesn't cover other seas) -- set
+# area.json's poseidon_enabled to false for a non-Greek area's copy, which
+# skips fetching this tier entirely and omits it from the status strip.
+POSEIDON_ENABLED = _area.get("poseidon_enabled", True)
+POSEIDON_BASE = "https://nodejs.hcmr.gr/forB"
+# Field order per HCMR's own model definitions (poseidon-map/code.min.js's
+# `models` object) -- the API returns a bare comma-separated string per
+# timestep with no field names, so this order is load-bearing, not
+# discoverable from the response itself.
+POSEIDON_WIND_MODEL = "METEO"
+POSEIDON_WIND_FIELDS = ["t2m", "w10", "wangle", "cloud", "snow", "rain", "seag"]
+# WW3 (WaveWatch III) and WAM both returned live, near-identical wave data
+# in testing for this area's spots -- WW3 is the more widely used modern
+# standard, picked as primary; swap to "WAM" here if it ever seems better.
+POSEIDON_WAVE_MODEL = "WW3"
+POSEIDON_WAVE_FIELDS = ["wht", "dummy", "wangle"]
+# w10 is raw m/s (confirmed from HCMR's own unit-conversion table, which
+# treats "x" -- identity -- as the m/s option); convert to knots like every
+# other wind figure in this project.
+POSEIDON_MS_TO_KT = 1.944
+# Small nearby candidates to retry only when the wave model's exact point
+# comes back fully masked (-999) -- confirmed live that this happens for
+# genuinely-in-the-sea points near a coastline (a point ~5km away read fine),
+# same class of problem as Open-Meteo's cell_selection="sea". Deliberately
+# NOT a general 3x3 kernel: no fixed direction consistently works (a
+# masked cell's nearest valid water differs per spot depending on which way
+# the coast falls), so this tries a handful of directions/distances in
+# order and stops at the first one that has any real data, rather than
+# always fetching a fixed grid -- keeps the request count down for the 4
+# (of 7) spots that never need it at all.
+POSEIDON_WAVE_FALLBACK_OFFSETS_DEG = [
+    (-0.05, 0), (0.05, 0), (0, 0.05), (0, -0.05),
+    (-0.1, 0), (0.1, 0), (0, 0.1), (0, -0.1),
+]
+
+
+def poseidon_forecast(model, lat, lon):
+    """One HTTP call for a single point's short-range time series (3-hourly
+    steps, UTC timestamps) from HCMR's regional model. Reuses fetch() with
+    no query params since this API is purely path-based, unlike Open-Meteo.
+
+    A short delay before each call: confirmed live during development that
+    rapid-fire requests to this specific host can trip a transient 503 (rate
+    limit or similar), recovering within ~15-30s -- a real, observed fragility
+    unlike Open-Meteo/ECMWF's production infra elsewhere in this file. 7
+    spots x 2 models = 14 calls/run; ~0.3s each adds a few seconds total,
+    negligible for a once-daily job, cheap insurance against the same thing
+    happening on the real run."""
+    time.sleep(0.3)
+    return fetch(f"{POSEIDON_BASE}/{model}/{lat:.4f}/{lon:.4f}", {})
+
+
+def parse_poseidon_series(data, fields):
+    """[{"date": "...Z", "data": "v1,v2,..."}] -> [(local_datetime, {field:
+    value})]. Converts HCMR's UTC timestamps to TRIP_TZ before any date-
+    bucketing happens, matching trip_dates() for every other tier (whose
+    timestamps arrive already localized, via Open-Meteo's timezone param).
+
+    -999 is HCMR's own "no data" sentinel (confirmed from their own client
+    code: `if(-999==x)return" - "`) -- e.g. a spot too close to shore for
+    their wave grid. Converted to None here, not left as a real -999 value
+    that would otherwise silently wreck every mean/min/max downstream."""
+    out = []
+    for entry in data:
+        local_dt = dt.datetime.fromisoformat(entry["date"].replace("Z", "+00:00")).astimezone(TRIP_TZ)
+        raw = entry.get("data")
+        if not raw:
+            continue
+        values = [None if v in ("", None) or float(v) == -999 else float(v) for v in raw.split(",")]
+        out.append((local_dt, dict(zip(fields, values))))
+    return out
+
+
+def poseidon_wave_forecast(lat, lon):
+    """Wave point forecast with a small fallback search -- see
+    POSEIDON_WAVE_FALLBACK_OFFSETS_DEG above for why this exists and why
+    it's a short ordered list of candidates, not a kernel. Tries the exact
+    point first; only if every timestep there is masked does it try each
+    offset in turn, stopping at the first with any real data."""
+    data = poseidon_forecast(POSEIDON_WAVE_MODEL, lat, lon)
+    if any(v.get("wht") is not None for _, v in parse_poseidon_series(data, POSEIDON_WAVE_FIELDS)):
+        return data
+    for dlat, dlon in POSEIDON_WAVE_FALLBACK_OFFSETS_DEG:
+        candidate = poseidon_forecast(POSEIDON_WAVE_MODEL, lat + dlat, lon + dlon)
+        if any(v.get("wht") is not None for _, v in parse_poseidon_series(candidate, POSEIDON_WAVE_FIELDS)):
+            print(f"  (wave: exact point masked, using a valid cell {dlat:+.2f},{dlon:+.2f} deg away instead)")
+            return candidate
+    return data  # every candidate masked too -- return the original (all-None) response
+
+
+def extract_poseidon_records(name, wind_data, wave_data):
+    """Daily aggregate from HCMR's 3-hourly point series -- single point, no
+    3x3 kernel (this is a small, independent additive tier, not folded into
+    the medium-range kernel/consensus machinery tiers 2-3 use). wind_mean/
+    dir/rain/temp are the day's mean/circular-mean/sum/min-max, matching the
+    semantics of the same-named fields elsewhere. wind_max is the day's
+    highest 3-hourly sample -- HCMR's model has no separate gust field, so
+    this is deliberately labeled 'wind_max', not 'gust', to avoid implying a
+    value HCMR doesn't actually provide. Wave height is the day's max (same
+    worst-case-matters reasoning as gust/wave elsewhere); HCMR's wave model
+    gives no period, so there's no wave-period figure for this tier."""
+    wind_series = parse_poseidon_series(wind_data, POSEIDON_WIND_FIELDS)
+    wave_series = parse_poseidon_series(wave_data, POSEIDON_WAVE_FIELDS)
+
+    by_day = {}
+    for local_dt, vals in wind_series:
+        date = local_dt.date()
+        if TRIP_START <= date <= TRIP_END:
+            by_day.setdefault(date, {"wind": [], "wave": []})["wind"].append(vals)
+    for local_dt, vals in wave_series:
+        date = local_dt.date()
+        if TRIP_START <= date <= TRIP_END:
+            by_day.setdefault(date, {"wind": [], "wave": []})["wave"].append(vals)
+
+    out = []
+    for date in sorted(by_day):
+        wind_vals, wave_vals = by_day[date]["wind"], by_day[date]["wave"]
+        speeds_kt = [v["w10"] * POSEIDON_MS_TO_KT for v in wind_vals if v.get("w10") is not None]
+        dirs = [v["wangle"] % 360 for v in wind_vals if v.get("wangle") is not None]
+        rains = [v["rain"] for v in wind_vals if v.get("rain") is not None]
+        temps = [v["t2m"] for v in wind_vals if v.get("t2m") is not None]
+        waves = [v["wht"] for v in wave_vals if v.get("wht") is not None]
+        # Paired with wht's own validity, not checked independently -- a
+        # masked/land wave cell (wht is None) still reports a wangle value
+        # (observed: a uniform 0 rather than -999), which would otherwise
+        # read as a real "due north" direction for a wave that doesn't exist.
+        wave_dirs = [v["wangle"] % 360 for v in wave_vals if v.get("wht") is not None and v.get("wangle") is not None]
+
+        out.append({
+            "spot": name, "date": date.isoformat(),
+            "wind_mean": mean(speeds_kt), "wind_max": max(speeds_kt) if speeds_kt else None,
+            "dir": circular_mean_deg(dirs),
+            "rain": sum(rains) if rains else None,
+            "temp_lo": min(temps) if temps else None, "temp_hi": max(temps) if temps else None,
+            "wave": max(waves) if waves else None,
+            "wave_dir": circular_mean_deg(wave_dirs),
+        })
+    return out
+
+
+def poseidon_run_rows(records, run_date):
+    return [{
+        "run_date": run_date, "tier": "poseidon", "model": f"HCMR_{POSEIDON_WIND_MODEL}_{POSEIDON_WAVE_MODEL}",
+        "spot": r["spot"], "date": r["date"],
+        "wind_mean": r["wind_mean"], "wind_max": r["wind_max"], "dir": r["dir"],
+        "rain": r["rain"], "temp_lo": r["temp_lo"], "temp_hi": r["temp_hi"],
+        "wave": r["wave"], "wave_dir": r["wave_dir"],
+    } for r in records]
+
+
+def print_poseidon_day_tables(records):
+    header = f"{'Place':<{PLACE_WIDTH}}{'Wind':>6}{'Max':>6}  {'Dir':<4}{'Rain':>6}{'T.lo':>6}{'T.hi':>6}  {'Wave':>5}  Wave Dir"
+    for date, rows in by_date(records):
+        print(f"\n=== {date} ===")
+        print(header)
+        for r in rows:
+            print(f"{r['spot']:<{PLACE_WIDTH}}{fmt_num(r['wind_mean'], 6)}{fmt_num(r['wind_max'], 6)}  "
+                  f"{deg_to_compass(r['dir']):<4}{fmt_num(r['rain'], 6, 1)}{fmt_num(r['temp_lo'], 6)}"
+                  f"{fmt_num(r['temp_hi'], 6)}  {fmt_num(r['wave'], 5, 1)}  {deg_to_compass(r['wave_dir'])}")
+        # Hyphenated "lo-hi" range strings run wider than a single value
+        # (e.g. "0.1-0.3"), so -- unlike the fixed-width single-value rows
+        # above -- an explicit 2-space gap is needed between adjacent range
+        # columns or they can run together with no visible separation.
+        rng = (f"{'RANGE':<{PLACE_WIDTH}}{col_range(rows, 'wind_mean'):>6}{col_range(rows, 'wind_max'):>6}  "
+               f"{'':<4}{col_range(rows, 'rain', 1):>6}{col_range(rows, 'temp_lo'):>6}{col_range(rows, 'temp_hi'):>6}  "
+               f"{col_range(rows, 'wave', 1):>5}")
+        print(rng)
+
+
+def print_poseidon_trip_summary(records):
+    print(f"\n>>> HCMR Poseidon regional (short-range, unofficial): {TRIP_START} to {TRIP_END} <<<")
+    wind_extremes = named_extremes(records, "wind_mean")
+    if wind_extremes:
+        lo_v, lo_s, hi_v, hi_s = wind_extremes
+        print(f"wind: {lo_s} calmest at {fnum(lo_v, 0)}kt, {hi_s} windiest at {fnum(hi_v, 0)}kt")
+    wave_extremes = named_extremes(records, "wave")
+    if wave_extremes:
+        lo_v, lo_s, hi_v, hi_s = wave_extremes
+        print(f"wave: {lo_s} calmest at {fnum(lo_v)}m, {hi_s} biggest at {fnum(hi_v)}m")
 
 
 # ---------------------------------------------------------------- helpers --
@@ -929,7 +1135,8 @@ present in it."""
 
 
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
-                             sea_records, sea_opens_note, tiers, sailing_summary):
+                             sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
+                             tiers, sailing_summary):
     dates = all_dates()
     params = {}
 
@@ -966,6 +1173,38 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
                                                     "Marine model doesn't reach these trip dates yet -- rerun closer to the trip")
     else:
         params["wave_dir"] = placeholder_block("Wave direction", "", sea_opens_note)
+
+    # Tier 5 -- independent, additive; entirely absent from the payload (not
+    # even a pending placeholder) when area.json's poseidon_enabled is false,
+    # so a non-Greek area's dashboard shows no trace of a tier that could
+    # never work for it.
+    if POSEIDON_ENABLED:
+        poseidon_specs = [
+            ("poseidon_wind", "wind_mean", "Wind (mean)", "kt", 0),
+            ("poseidon_wind_max", "wind_max", "Wind (max)", "kt", 0),
+            ("poseidon_rain", "rain", "Rain", "mm", 1),
+            ("poseidon_temp_lo", "temp_lo", "Temp (low)", "°C", 0),
+            ("poseidon_temp_hi", "temp_hi", "Temp (high)", "°C", 0),
+            ("poseidon_wave", "wave", "Wave height", "m", 1),
+        ]
+        for param_key, field, label, unit, decimals in poseidon_specs:
+            if poseidon_records:
+                params[param_key] = build_param_block(poseidon_records, dates, field, label, unit, decimals,
+                                                       "HCMR Poseidon (unofficial)",
+                                                       "No data for these trip dates yet -- rerun closer to the trip")
+            else:
+                params[param_key] = placeholder_block(label, unit, poseidon_opens_note)
+
+        if poseidon_records:
+            params["poseidon_wind_dir"] = build_direction_block(
+                poseidon_records, dates, "dir", "Wind direction", "HCMR Poseidon (unofficial)",
+                "No data for these trip dates yet -- rerun closer to the trip")
+            params["poseidon_wave_dir"] = build_direction_block(
+                poseidon_records, dates, "wave_dir", "Wave direction", "HCMR Poseidon (unofficial)",
+                "No data for these trip dates yet -- rerun closer to the trip")
+        else:
+            params["poseidon_wind_dir"] = placeholder_block("Wind direction", "", poseidon_opens_note)
+            params["poseidon_wave_dir"] = placeholder_block("Wave direction", "", poseidon_opens_note)
 
     return {
         "dates": dates, "runStamp": run_stamp, "places": list(SPOTS.keys()),
@@ -1168,6 +1407,40 @@ def main():
             print("(None of the trip dates are inside the chart horizon yet -- rerun closer to the trip.)")
         chart_tier_live = any_chart
 
+    # Tier 5, right next to tier 4 in the console: independent, purely
+    # additive HCMR Poseidon regional forecast -- see the POSEIDON_* block
+    # above for what this is and its unofficial/undocumented caveats. Gated
+    # the same as tiers 2-3 (attempt from 15 days out), but its own real
+    # horizon is much shorter (~5-6 days, not published) -- state below
+    # reflects whether trip dates actually came back, not an assumed cutoff.
+    poseidon_records = None
+    print()
+    if not POSEIDON_ENABLED:
+        pass
+    elif days_out > MEDIUM_RANGE_DAYS:
+        print(f"HCMR Poseidon regional forecast (unofficial) will start covering the trip from ~{medium_available} "
+              "(its actual short horizon may be much narrower -- checked at that point).")
+    else:
+        print("##### HCMR Poseidon regional forecast: wind + wave (unofficial, Greek-seas-specific) #####")
+        print("Independent second opinion alongside the ECMWF chart above -- own model, own point (no kernel), "
+              "no gust or wave-period field available from this source. Not a documented/stable API; "
+              "see aegean_forecast.py's POSEIDON_* comments.")
+        records = []
+        for name, (lat, lon) in SPOTS.items():
+            try:
+                wind_data = poseidon_forecast(POSEIDON_WIND_MODEL, lat, lon)
+                wave_data = poseidon_wave_forecast(lat, lon)
+                records += extract_poseidon_records(name, wind_data, wave_data)
+            except Exception as e:
+                print(f"{name}: failed ({e})", file=sys.stderr)
+        if records:
+            poseidon_records = records
+            log_rows(poseidon_run_rows(records, run_stamp))
+            print_poseidon_day_tables(records)
+            print_poseidon_trip_summary(records)
+        else:
+            print("(Trip dates are beyond HCMR's actual short horizon yet -- rerun closer to the trip.)")
+
     # Medium-range consensus supersedes EC46 once it's live -- it's
     # independent models agreeing (or flagged when they don't), not a single
     # coarse ensemble mean, so prefer it for the dashboard's wind/temp/rain cards.
@@ -1188,6 +1461,9 @@ def main():
         {"name": "ECMWF synoptic charts", "state": "live" if chart_tier_live else "pending",
          "note": "MSLP + 850 hPa wind, per day" if chart_tier_live else "opens ~9-10 days out"},
     ]
+    if POSEIDON_ENABLED:
+        tiers.append({"name": "Poseidon regional (unofficial)", "state": "live" if poseidon_records else "pending",
+                       "note": "HCMR wind + wave" if poseidon_records else f"opens ~{medium_available} (short horizon)"})
 
     print()
     sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv)
@@ -1201,6 +1477,9 @@ def main():
         wind_opens_note=f"Opens ~{ec46_available} (EC46 extended range)",
         sea_records=sea_records,
         sea_opens_note=f"Sea state opens ~{medium_available} — rerun the forecast script closer to the trip",
+        poseidon_records=poseidon_records,
+        poseidon_opens_note=f"HCMR Poseidon (unofficial) opens ~{medium_available} — actual horizon is much "
+                             "shorter, rerun closer to the trip",
         tiers=tiers, sailing_summary=sailing_summary,
     )
     write_dashboard(payload)

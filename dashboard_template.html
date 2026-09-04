@@ -119,7 +119,10 @@
   }
 
   .status-strip {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+    /* auto-fit rather than a fixed 4 columns -- area.json's poseidon_enabled
+       (or a future area with more/fewer tiers) can change the tier count
+       without this needing a matching edit. */
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;
     margin-bottom: 28px;
   }
   .status-chip {
@@ -318,6 +321,19 @@
     combine &mdash; it's already someone else's finished ensemble mean. Rows show the region's actual spread
     (sheltered vs. exposed spots), never a single averaged number, since this route crosses both. This page
     regenerates automatically on every run.</p>
+
+    <!-- Hidden by buildFooter() when area.json's poseidon_enabled is false
+         -- see the "poseidon" id below. -->
+    <p id="poseidon-footer"><b>Poseidon regional forecast (independent, additive):</b> a second, unofficial
+    opinion from HCMR's (Hellenic Centre for Marine Research) own short-range Greek-seas model, shown
+    alongside the ECMWF chart above &mdash; not a replacement for the tiers above it, and not folded into
+    their kernel/consensus logic. Own model, own single point per place (no 3&times;3 kernel). Wind max is
+    the day's highest 3-hourly sample, not a true gust &mdash; HCMR's model doesn't provide a separate gust
+    figure, and its wave model gives no period either. This is not part of any documented, versioned public
+    API (found by reading the public Poseidon map's own client code, the same request a browser makes)
+    &mdash; it can change or vanish without notice, unlike every other source described above, and some coastal
+    spots simply have no wave data (a masked/land grid cell in HCMR's model, shown as &ldquo;&ndash;&rdquo;
+    rather than a real reading).</p>
   </footer>
 
 </div>
@@ -341,7 +357,14 @@ __COASTLINE_DATA_JSON__
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const MONTHS_FULL = ["January","February","March","April","May","June","July",
                         "August","September","October","November","December"];
-  const PARAM_ORDER = ["wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period"];
+  const PARAM_ORDER = [
+    "wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period",
+    // Tier 5, independent/additive -- absent from DATA.params entirely (not
+    // even as a pending placeholder) when area.json's poseidon_enabled is
+    // false, so these five keys are simply skipped below in that case.
+    "poseidon_wind", "poseidon_wind_dir", "poseidon_wind_max", "poseidon_rain",
+    "poseidon_temp_lo", "poseidon_temp_hi", "poseidon_wave", "poseidon_wave_dir",
+  ];
 
   // Short forms for table headers / legend / tooltip -- full names (with
   // parentheticals) don't fit multi-place-wide without forcing a scroll
@@ -457,6 +480,10 @@ __COASTLINE_DATA_JSON__
     document.querySelector(".sw").textContent = `${DATA.spreadWindKt}kt`;
     document.querySelector(".sd").textContent = `${DATA.spreadDirDeg}°`;
     document.querySelector(".dw").textContent = `${DATA.dirFlagMinWindKt}kt`;
+    // "poseidon_wind" (or any tier-5 key) only exists in DATA.params when
+    // area.json's poseidon_enabled is true -- hide the paragraph describing
+    // a Greece-specific tier entirely for an area that could never have it.
+    document.getElementById("poseidon-footer").hidden = !DATA.params.poseidon_wind;
   }
 
   function buildSummary() {

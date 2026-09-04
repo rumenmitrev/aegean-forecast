@@ -87,6 +87,16 @@
   "map_pad_lon": 0.55,
   "map_pad_lat": 0.45,
 
+  // ---- HCMR Poseidon regional forecast (tier 5), optional -------------------
+  // A second, independent, Greece-specific opinion (wind + wave) from HCMR's
+  // own short-range regional model, shown alongside tier 4's ECMWF chart --
+  // additive, never a replacement for the tiers above. This is an
+  // UNOFFICIAL/undocumented endpoint (see POSEIDON_* in aegean_forecast.py)
+  // with no published stability guarantee, unlike every other source this
+  // pipeline uses. Set to false for a non-Greek area's copy -- HCMR doesn't
+  // cover other seas, so this tier would just fail every run for one.
+  "poseidon_enabled": true,
+
   // ---- AI sailing summary context, optional ---------------------------------
   // A paragraph of area-specific sailing effects (channel funneling, gap
   // winds, which spots are sheltered) fed to the Claude prompt. Leave this
@@ -107,11 +117,11 @@
   // PALETTE_DARK color arrays (see README.md).
   "spots": [
     {"name": "Keramoti / Thassos", "lat": 40.85, "lon": 24.70, "short": "Keramoti", "short_mobile": "Ker"},
-    {"name": "Samothrace (S coast)", "lat": 40.42, "lon": 25.55, "short": "Samothrace", "short_mobile": "Sam"},
-    {"name": "Lemnos (Myrina)", "lat": 39.87, "lon": 25.05, "short": "Lemnos", "short_mobile": "Lem"},
+    {"name": "Samothrace (S coast)", "lat": 40.21, "lon": 25.37, "short": "Samothrace", "short_mobile": "Sam"},
+    {"name": "West from Lemnos (Myrina)", "lat": 40.12, "lon": 24.71, "short": "Lemnos", "short_mobile": "Lem"},
     {"name": "Thracian Sea (open water)", "lat": 40.45, "lon": 25.10, "short": "Thracian Sea", "short_mobile": "Thr"},
-    {"name": "Gulf of Saros (E of Samothrace)", "lat": 40.55, "lon": 26.40, "short": "Gulf of Saros", "short_mobile": "Sar"},
-    {"name": "Agios Efstratios (S of Lemnos)", "lat": 39.50, "lon": 24.98, "short": "Ag. Efstratios", "short_mobile": "Efs"},
+    {"name": "Dardaneles (E of Lemnos)", "lat": 39.83, "lon": 25.69, "short": "Dardaneles", "short_mobile": "Dar"},
+    {"name": "Agios Efstratios (S of Lemnos)", "lat": 39.68, "lon": 25.06, "short": "Ag. Efstratios", "short_mobile": "Efs"},
     {"name": "Mount Athos (N approach)", "lat": 40.55, "lon": 24.182, "short": "Mount Athos", "short_mobile": "Ath"}
   ]
 }
