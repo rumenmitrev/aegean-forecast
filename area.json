@@ -1,0 +1,117 @@
+// ============================================================================
+// area.json -- everything specific to THIS sailing area/trip lives here.
+// Point the pipeline at a different area or different dates by editing this
+// file only -- no code or HTML edits needed. See README.md's "Setting up a
+// new area" section for the full walkthrough.
+//
+// This file supports `//` line comments (like this one) despite the .json
+// extension -- aegean_forecast.py strips them (respecting string values)
+// before parsing, see strip_json_comments(). A strict JSON linter/schema
+// tool will flag these comments as invalid even though the pipeline reads
+// the file fine; trailing commas are still a real JSON error, comments or
+// not.
+// ============================================================================
+{
+  // ---- Trip window ---------------------------------------------------------
+  // ISO dates and an IANA timezone name (e.g. "America/Nassau" for the
+  // Bahamas). `timezone` alone drives every date computation in the
+  // pipeline (which days count as "the trip", the dashboard's "data
+  // captured" stamp) AND is passed to Open-Meteo as the API's timezone
+  // parameter -- this one field is the only place to change it.
+  "trip_start": "2026-10-03",
+  "trip_end": "2026-10-10",
+  "timezone": "Europe/Athens",
+
+  // ---- ECMWF synoptic chart tier (tier 4) -----------------------------------
+  // The opencharts region code covering this area. To find the valid list:
+  // call opencharts_product(CHART_PRODUCT, "2099-01-01T00:00:00Z") (an
+  // obviously-invalid date) from a `python3 -i` shell -- the error message
+  // lists every valid projection code. Pick the one that covers this area.
+  "chart_projection": "opencharts_south_east_europe",
+
+  // ---- Deployment identity ---------------------------------------------------
+  // EdgeOne Pages project name. Give a new area its own name -- reusing an
+  // existing one overwrites that area's live site instead of standing up a
+  // second one.
+  "edgeone_project_name": "aegean-forecast",
+
+  // ---- Dashboard header text -------------------------------------------------
+  // The tab title, small-caps eyebrow label, and the big <h1>. The route
+  // line shown under them (dates + place list) is generated automatically
+  // from trip_start/trip_end and each spot's "short" label below -- nothing
+  // to write by hand for that part.
+  "page_title": "Aegean Forecast",
+  "eyebrow": "North Aegean · sailing forecast",
+  "heading": "Thassos · Samothrace · Lemnos",
+
+  // ---- Medium-range consensus models (tier 2) -------------------------------
+  // Which independent models are averaged (wind/temp/rain/direction) or
+  // worst-cased (gust) into the medium-range consensus tier, live from ~15
+  // days out. "code" is the exact Open-Meteo model identifier (fed to the
+  // API call and written to runs.csv's model column); "label" is the
+  // human-readable name shown in console output, the dashboard, and the
+  // Claude prompt. A different area might have better-skilled regional
+  // models worth using instead of these three global ones.
+  "medium_models": [
+    {"code": "ecmwf_ifs", "label": "ECMWF IFS"},
+    {"code": "gfs_seamless", "label": "NOAA GFS"},
+    {"code": "icon_seamless", "label": "DWD ICON"}
+  ],
+
+  // ---- Model-disagreement flagging (tier 2), all optional -------------------
+  // A place/day gets flagged when the medium-range models disagree by more
+  // than this much: spread_wind_kt (mean wind speed spread, in knots) or
+  // spread_dir_deg (direction spread, in degrees) -- direction disagreement
+  // only counts when wind is at least dir_flag_min_wind_kt (below that,
+  // direction is poorly defined in near-calm air). Defaults shown below; a
+  // calmer/steadier cruising ground might reasonably want tighter
+  // thresholds than this route's mix of open channel and sheltered coast.
+  "spread_wind_kt": 6,
+  "spread_dir_deg": 45,
+  "dir_flag_min_wind_kt": 5,
+
+  // ---- Medium-range/sea-state kernel, optional ------------------------------
+  // Each medium-range model (and the sea-state model) is sampled over a
+  // 3x3 grid of points spaced kernel_step_deg apart around every spot,
+  // instead of one point -- see README.md's "How the numbers are
+  // calculated". Default 0.15 is ~30x25 km at these latitudes; a tighter
+  // archipelago or sharper local terrain might want a smaller kernel than
+  // this route's mix of open water and coast.
+  "kernel_step_deg": 0.15,
+
+  // ---- Coastline map padding, optional ---------------------------------------
+  // How far past the spots (in degrees) fetch_coastline.py extends the map
+  // view -- see that script's --pad-lon/--pad-lat, which default to these.
+  // A tightly clustered set of spots wants less padding than a spread-out
+  // route.
+  "map_pad_lon": 0.55,
+  "map_pad_lat": 0.45,
+
+  // ---- AI sailing summary context, optional ---------------------------------
+  // A paragraph of area-specific sailing effects (channel funneling, gap
+  // winds, which spots are sheltered) fed to the Claude prompt. Leave this
+  // field out entirely (or empty) for a new area until you've written a
+  // real one -- an empty/missing value just skips that paragraph, rather
+  // than feeding the model this area's effects for a place they don't
+  // exist in.
+  "local_knowledge": "Local knowledge about these specific spots, for context if relevant -- don't force it in if a day's data doesn't support it: Lemnos and Agios Efstratios sit in the open channel south of the main islands and tend to run windier than the sheltered coastal spots; the Gulf of Saros can locally accelerate a northeasterly into a stronger funneled flow than the open-water reading suggests; Mount Athos's steep terrain can produce local gap/katabatic gusts stronger than the gridded forecast captures; Thracian Sea (open water) and Keramoti/Thassos are the most sheltered, coastal readings.",
+
+  // ---- Spots ------------------------------------------------------------------
+  // The places this pipeline tracks, each with lat/lon plus explicit
+  // "short"/"short_mobile" labels -- shown in table headers, the legend,
+  // and map pins (short) or phone-width columns (short_mobile). Labels are
+  // never auto-abbreviated -- collision-prone and silently wrong for odd
+  // names (nothing would catch two spots both landing on the same 3
+  // letters) -- so write both by hand. Up to 12 spots need no other change;
+  // beyond that, extend dashboard_template.html's PALETTE_LIGHT/
+  // PALETTE_DARK color arrays (see README.md).
+  "spots": [
+    {"name": "Keramoti / Thassos", "lat": 40.85, "lon": 24.70, "short": "Keramoti", "short_mobile": "Ker"},
+    {"name": "Samothrace (S coast)", "lat": 40.42, "lon": 25.55, "short": "Samothrace", "short_mobile": "Sam"},
+    {"name": "Lemnos (Myrina)", "lat": 39.87, "lon": 25.05, "short": "Lemnos", "short_mobile": "Lem"},
+    {"name": "Thracian Sea (open water)", "lat": 40.45, "lon": 25.10, "short": "Thracian Sea", "short_mobile": "Thr"},
+    {"name": "Gulf of Saros (E of Samothrace)", "lat": 40.55, "lon": 26.40, "short": "Gulf of Saros", "short_mobile": "Sar"},
+    {"name": "Agios Efstratios (S of Lemnos)", "lat": 39.50, "lon": 24.98, "short": "Ag. Efstratios", "short_mobile": "Efs"},
+    {"name": "Mount Athos (N approach)", "lat": 40.55, "lon": 24.182, "short": "Mount Athos", "short_mobile": "Ath"}
+  ]
+}

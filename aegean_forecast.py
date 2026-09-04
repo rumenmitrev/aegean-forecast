@@ -1,31 +1,44 @@
 #!/usr/bin/env python3
 """
-North Aegean sailing forecast pull (3-10 Oct 2026).
+Sailing forecast pull, config-driven via area.json.
 
-New area or dates: this line is cosmetic, but everything functional lives in
-the constants below (TRIP_START/END/TZ, SPOTS, CHART_PROJECTION,
-EDGEONE_PROJECT_NAME -- each marked "NEW AREA" inline) and in
-dashboard_template.html's static header text (title/eyebrow/h1/route line)
-plus its SHORT/SHORT_MOBILE label maps.
+New area or dates: edit area.json -- trip_start/trip_end/timezone,
+chart_projection, edgeone_project_name, page_title/eyebrow/heading, the
+spots list (name/lat/lon/short/short_mobile), medium_models (which models
+feed the medium-range consensus), and optional kernel_step_deg,
+map_pad_lon/map_pad_lat, spread_wind_kt/spread_dir_deg/dir_flag_min_wind_kt,
+and local_knowledge. No code edit needed for any of that. What still needs a
+manual step (documented in README.md): rerun fetch_coastline.py after
+changing spots, and set up a fresh EdgeOne project / GitHub repo / Actions
+cron if this is meant to run as a second, independent area alongside this
+one -- those are about *where*/*when* it deploys, not what data it shows.
 
 Progressively sharper picture as the trip approaches:
   >46 days out : nothing skillful yet -> says when each tier switches on.
   <=46 days out: ECMWF EC46 sub-seasonal ENSEMBLE MEAN (extended range, 36 km).
                  Coarse, smooths fronts -> read as regime/tendency, not a forecast.
-  <=15 days out: medium-range consensus across three independent models --
-                 ECMWF IFS, NOAA GFS, DWD ICON. Each model is read from a 3x3
-                 grid kernel around every spot (~30x25 km, see KERNEL_STEP_DEG
-                 below), not one point -- a boat sailing a spot experiences
-                 that whole patch of sea, not a single GPS pin. Wind/temp/
-                 rain/direction are the kernel MEAN (smooths single-cell grid
-                 noise); gust is the kernel MAX (it's already a worst-case
-                 figure, so averaging it away would blunt real local peaks,
-                 e.g. a gap-wind gust one cell over). The three models' kernel
-                 values are then combined the same way -- mean for wind/temp/
-                 rain/direction, max for gust -- with a flag when they
-                 disagree (real skill, real fronts). Per-model detail still
-                 goes to runs.csv.
-  <=15 days out: sea state (significant wave height, period, direction).
+  <=15 days out: medium-range consensus across independent models (area.json's
+                 medium_models -- ECMWF IFS / NOAA GFS / DWD ICON by default).
+                 Each model is read from a 3x3 grid kernel around every spot
+                 (~30x25 km by default for this area's spots -- see
+                 area.json's kernel_step_deg and KERNEL_STEP_DEG below), not
+                 one point -- a boat sailing a spot experiences that whole
+                 patch of sea, not a single GPS pin. Wind/temp/rain/direction
+                 are the kernel MEAN (smooths single-cell grid noise); gust
+                 is the kernel MAX (it's already a worst-case figure, so
+                 averaging it away would blunt real local peaks, e.g. a
+                 gap-wind gust one cell over). Each model's kernel values are
+                 then combined the same way across models -- mean for
+                 wind/temp/rain/direction, max for gust -- with a flag when
+                 they disagree (real skill, real fronts; thresholds are
+                 area.json's spread_wind_kt/spread_dir_deg/
+                 dir_flag_min_wind_kt). Per-model detail still goes to
+                 runs.csv.
+  <=15 days out: sea state (significant wave height, period, direction), same
+                 3x3 kernel per spot: wave height is the kernel MAX (same
+                 worst-case reasoning as gust), period/direction the kernel
+                 mean. Single model (Open-Meteo Marine), so no models-consensus
+                 step on top -- the kernel is the only combining here.
   ~<=9-10 days  : ECMWF's own official synoptic chart (MSLP + 850 hPa wind) is
                  pulled and saved as PNG per day -- actual fronts/highs/lows,
                  not a derived number. Horizon shifts slightly run to run.
@@ -52,25 +65,101 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-# === NEW AREA/DATES: trip window and local timezone =========================
+# ---------------------------------------------------------- area config --
+
+# Everything specific to *this* area/trip lives in area.json, not here --
+# see the module docstring. Loaded once at import time; every area-specific
+# "constant" below is derived from this dict, not hand-edited in this file.
+AREA_CONFIG_FILE = pathlib.Path(__file__).resolve().parent / "area.json"
+
+
+def strip_json_comments(text):
+    """Strip `//` line comments from area.json text, respecting string
+    literals (a `//` inside a quoted value is left alone) -- lets the file
+    carry a plain-language description above each parameter/group despite
+    the .json extension, no comment-JSON library dependency needed. A
+    strict JSON linter/validator will flag the comments as invalid even
+    though this loader (and only this loader) reads them fine; trailing
+    commas are still a real JSON error, comments or not."""
+    out = []
+    in_string = False
+    escape = False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+        if c == '"':
+            in_string = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def load_area_config():
+    return json.loads(strip_json_comments(AREA_CONFIG_FILE.read_text(encoding="utf-8")))
+
+
+_area = load_area_config()
+
 # TRIP_TZ drives every date computation (days_out gating, run_stamp, the
 # dashboard's "data captured" line) AND is fed to Open-Meteo as the timezone
-# name via TRIP_TZ.key below -- change it here only, nowhere else.
-TRIP_START = dt.date(2026, 10, 3)
-TRIP_END = dt.date(2026, 10, 10)
-TRIP_TZ = ZoneInfo("Europe/Athens")
-# ==============================================================================
+# name via TRIP_TZ.key below.
+TRIP_START = dt.date.fromisoformat(_area["trip_start"])
+TRIP_END = dt.date.fromisoformat(_area["trip_end"])
+TRIP_TZ = ZoneInfo(_area["timezone"])
+
+# Must be one of the enum values opencharts_product() rejects with a list of
+# alternatives (see chart_for_date's error path) -- area.json's
+# chart_projection needs to be one of those, covering the area's location.
+CHART_PROJECTION = _area["chart_projection"]
+
+# Give a new area its own project name in area.json, or this overwrites the
+# live site of whichever area last used this name instead of standing up a
+# second one. RUNS_CSV/DASHBOARD_OUT/SITE_DIR/CHARTS_DIR below are relative
+# to this file's own directory, so a fresh copy of the whole project (see
+# README.md's new-area guide) keeps a second area's files separate on their
+# own regardless.
+EDGEONE_PROJECT_NAME = _area["edgeone_project_name"]
+
+# Dashboard header text -- see dashboard_template.html's buildHeader().
+PAGE_TITLE = _area["page_title"]
+EYEBROW = _area["eyebrow"]
+HEADING = _area["heading"]
+
+# {"Name": (lat, lon)} -- names double as dict keys threaded through
+# runs.csv, the console tables, and the dashboard payload.
+SPOTS = {s["name"]: (s["lat"], s["lon"]) for s in _area["spots"]}
+# {"Name": {"short": ..., "shortMobile": ...}} -- fed to the dashboard so
+# labels are never auto-abbreviated (collision-prone); each spot names its
+# own short forms explicitly in area.json.
+SPOT_LABELS = {s["name"]: {"short": s["short"], "shortMobile": s["short_mobile"]} for s in _area["spots"]}
+
+# North-Aegean-specific sailing effects (channel funneling, gap winds, which
+# spots are sheltered), fed to the Claude prompt in generate_sailing_summary()
+# -- optional; an empty string (area.json's default if omitted) just skips
+# that paragraph instead of feeding the model irrelevant Aegean geography.
+LOCAL_KNOWLEDGE = _area.get("local_knowledge", "")
 
 EXTENDED_RANGE_DAYS = 46
 MEDIUM_RANGE_DAYS = 15
 
 CHART_PRODUCT = "medium-mslp-wind850"
-# === NEW AREA: ECMWF opencharts region code ==================================
-# Must be one of the enum values opencharts_product() rejects with a list of
-# alternatives (see chart_for_date's error path) -- pick the one covering the
-# new area, e.g. opencharts_north_america, opencharts_south_east_asia, etc.
-CHART_PROJECTION = "opencharts_south_east_europe"
-# ==============================================================================
 CHARTS_DIR = pathlib.Path(__file__).resolve().parent / "charts"
 RUNS_CSV = pathlib.Path(__file__).resolve().parent / "runs.csv"
 # Real OSM coastline for the map card -- built once per area by
@@ -82,13 +171,6 @@ DASHBOARD_OUT = pathlib.Path(__file__).resolve().parent / "dashboard.html"
 # EdgeOne Pages publish: a dedicated site/ dir (index.html only, not the repo)
 # gets deployed as a stable named project so every run updates the same URL.
 SITE_DIR = pathlib.Path(__file__).resolve().parent / "site"
-# === NEW AREA: give it its own project name, or this overwrites the live
-# aegean-forecast site instead of standing up a second one. Also point
-# RUNS_CSV/DASHBOARD_OUT/SITE_DIR/CHARTS_DIR above at a fresh directory, so
-# a second area's files don't land in the first area's project folder.
-# ==============================================================================
-EDGEONE_PROJECT_NAME = "aegean-forecast"
-# ==============================================================================
 EDGEONE_TOKEN_FILE = pathlib.Path(__file__).resolve().parent / "edgeone_token.txt"
 # LLM sailing summary: Claude API. Tried a local no-auth model
 # (deepseek-r1:1.5b via Ollama) first -- confirmed live that it hallucinates
@@ -108,31 +190,15 @@ RUN_FIELDS = ["run_date", "tier", "model", "spot", "date",
               "temp_lo", "temp_hi", "wave", "period", "wave_dir"]
 
 # Mean wind spread (kt) or wind-direction spread (deg) across models above
-# which a day is flagged as disagreeing.
-SPREAD_WIND_KT = 6
-SPREAD_DIR_DEG = 45
+# which a day is flagged as disagreeing. Overridable per area via area.json
+# (a calmer/steadier cruising ground might want tighter thresholds than this
+# route's mix of open channel and sheltered coast).
+SPREAD_WIND_KT = _area.get("spread_wind_kt", 6)
+SPREAD_DIR_DEG = _area.get("spread_dir_deg", 45)
 # Below this, direction is poorly defined in near-calm air -- don't flag
 # direction disagreement between models when nothing is really blowing.
-DIR_FLAG_MIN_WIND_KT = 5
+DIR_FLAG_MIN_WIND_KT = _area.get("dir_flag_min_wind_kt", 5)
 
-# === NEW AREA: the 6 places (name, (lat, lon)) ================================
-# Names double as dict keys threaded through runs.csv, the console tables, and
-# the dashboard payload -- rename freely, but also update dashboard_template.
-# html's SHORT / SHORT_MOBILE maps (they're keyed by these exact strings) and
-# the static header text (title/eyebrow/h1/route line). Count can change too;
-# nothing downstream assumes exactly 6 except that CSS only defines --place-1
-# through --place-6 (dashboard_template.html) -- add more slots there if the
-# new area has more than 6 spots.
-SPOTS = {
-    "Keramoti / Thassos": (40.85, 24.70),
-    "Samothrace (S coast)": (40.42, 25.55),
-    "Lemnos (Myrina)": (39.87, 25.05),
-    "Thracian Sea (open water)": (40.45, 25.10),
-    "Gulf of Saros (E of Samothrace)": (40.55, 26.40),
-    "Agios Efstratios (S of Lemnos)": (39.50, 24.98),
-    "Mount Athos (N approach)": (40.55, 24.182),
-}
-# ==============================================================================
 PLACE_WIDTH = max(len(n) for n in SPOTS) + 2
 
 DAILY_VARS = [
@@ -149,26 +215,38 @@ DAILY = ",".join(DAILY_VARS)
 # accepted here too (confirmed live) even though wave grids are sea-only.
 SEA_DAILY = "wave_height_max,wave_period_max,wave_direction_dominant"
 
-MEDIUM_MODELS = ["ecmwf_ifs", "gfs_seamless", "icon_seamless"]
-MEDIUM_LABELS = {"ecmwf_ifs": "ECMWF", "gfs_seamless": "GFS", "icon_seamless": "ICON"}
+# The independent models averaged (wind/temp/rain/direction) or worst-cased
+# (gust) into the medium-range consensus tier -- area.json's medium_models,
+# each a {"code": <exact Open-Meteo model id>, "label": <human-readable
+# name>}. code feeds the API call and the runs.csv model column; label is
+# what console output, the dashboard, and the Claude prompt show. A
+# different area might have better-skilled regional models worth using
+# instead of these three global ones.
+MEDIUM_MODELS = [m["code"] for m in _area["medium_models"]]
+MEDIUM_MODEL_LABELS = {m["code"]: m["label"] for m in _area["medium_models"]}
+MEDIUM_MODELS_LABEL = " / ".join(m["label"] for m in _area["medium_models"])
 # All grid-point calls: bias toward the nearest sea cell. These are small
 # islands / narrow coastlines on a 9-36 km grid -- without this, a "coastal"
 # request can silently resolve to a mainland or mountaintop cell instead.
 CELL_SELECTION = "sea"
 
-# Medium-range only (see kernel_points()): each model is sampled on a 3x3
-# grid around every spot instead of one point, then combined per model
-# before the existing model-vs-model consensus logic runs. 0.15 deg step ->
-# edge-to-edge span of 0.3 deg -- at these latitudes (~39.5-40.9N) that's
-# ~33 km north-south and ~25 km east-west (a degree of longitude shrinks
-# with latitude, degree of latitude doesn't), so "3x3" is closer to 30x25 km
-# than a literal square. Confirmed live that Open-Meteo resolves all 9
-# requested points to 9 distinct grid cells at this spacing, and that
-# multiple locations batch into a single HTTP call (no extra request cost
-# for the wider kernel). EC46 and sea state stay single-point/single-model,
-# unaffected by this -- EC46 is already someone else's 51-member ensemble
-# mean, and sea state has no models-consensus step to extend this into.
-KERNEL_STEP_DEG = 0.15
+# Medium-range and sea state (see kernel_points()): each model/the marine
+# model is sampled on a 3x3 grid around every spot instead of one point,
+# then combined -- per model before the medium-range model-vs-model
+# consensus logic runs; directly (no further consensus step) for sea state,
+# since Marine is a single model. Default 0.15 deg step -> edge-to-edge span
+# of 0.3 deg -- at these latitudes (~39.5-40.9N) that's ~33 km north-south
+# and ~25 km east-west (a degree of longitude shrinks with latitude, degree
+# of latitude doesn't), so "3x3" is closer to 30x25 km than a literal
+# square. Confirmed live that Open-Meteo resolves all 9 requested points to
+# 9 distinct grid cells at this spacing, and that multiple locations batch
+# into a single HTTP call (no extra request cost for the wider kernel).
+# EC46 alone stays single-point/single-model, unaffected by this -- it's
+# already someone else's 51-member ensemble mean, nothing to kernel-combine.
+# Overridable per area via area.json's optional kernel_step_deg (e.g. a
+# tighter archipelago or sharper local terrain might want a smaller kernel
+# than this route's mix of open water and coast).
+KERNEL_STEP_DEG = _area.get("kernel_step_deg", 0.15)
 KERNEL_OFFSETS = (-KERNEL_STEP_DEG, 0.0, KERNEL_STEP_DEG)
 
 
@@ -177,6 +255,18 @@ def kernel_points(lat, lon):
     dlon inner) so index 4 (of 9) is always the exact-point center cell."""
     return [(round(lat + dlat, 4), round(lon + dlon, 4))
             for dlat in KERNEL_OFFSETS for dlon in KERNEL_OFFSETS]
+
+
+def kernel_span_km():
+    """Approximate (north-south, east-west) edge-to-edge km span of the 3x3
+    kernel at these spots' average latitude -- for the human-readable
+    descriptions in console output and the Claude prompt only, not used in
+    any actual calculation. A degree of latitude is ~111km everywhere; a
+    degree of longitude shrinks by cos(latitude), which is why the two
+    numbers differ."""
+    avg_lat = mean([lat for lat, lon in SPOTS.values()])
+    span_deg = KERNEL_STEP_DEG * 2
+    return span_deg * 111.0, span_deg * 111.0 * math.cos(math.radians(avg_lat))
 
 
 # ---------------------------------------------------------------- helpers --
@@ -271,8 +361,14 @@ def medium_range(lat, lon):
 
 
 def sea_state(lat, lon):
+    """One HTTP call for all 9 points of the 3x3 kernel around (lat, lon) --
+    same batching as medium_range(). Marine has no per-model consensus step
+    (single model, "best_match"), so the kernel here is the only combining
+    -- see extract_sea_state_records()."""
+    points = kernel_points(lat, lon)
     return fetch("https://marine-api.open-meteo.com/v1/marine", {
-        "latitude": lat, "longitude": lon,
+        "latitude": ",".join(str(p[0]) for p in points),
+        "longitude": ",".join(str(p[1]) for p in points),
         "daily": SEA_DAILY,
         "forecast_days": MEDIUM_RANGE_DAYS,
         "timezone": TRIP_TZ.key,
@@ -427,14 +523,25 @@ def extract_medium_records(name, cells):
     return out
 
 
-def extract_sea_state_records(name, data):
-    d = data["daily"]
+def extract_sea_state_records(name, cells):
+    """cells: the 9 kernel-point marine responses from sea_state(), in
+    kernel_points() order. Wave height is the kernel MAX -- same reasoning
+    as gust in extract_medium_records(): a boat crossing this patch of sea
+    can meet the roughest cell in it, not just the exact-point one, so
+    averaging it away would understate the real worst case. Period and
+    direction are the kernel mean -- less clearly a worst-case quantity, so
+    smoothed like wind/temp/rain rather than maxed like wave/gust."""
+    ref_time = cells[len(cells) // 2]["daily"]["time"]
     out = []
-    for i, day in trip_dates(d["time"]):
-        g = lambda k: d.get(k, [None] * len(d["time"]))[i]
+    for i, day in trip_dates(ref_time):
+        def series(key, _cells=cells, _i=i):
+            return [c["daily"].get(key, [None] * len(ref_time))[_i] for c in _cells]
+        waves = [v for v in series("wave_height_max") if v is not None]
         out.append({
             "spot": name, "date": day,
-            "wave": g("wave_height_max"), "period": g("wave_period_max"), "dir": g("wave_direction_dominant"),
+            "wave": max(waves) if waves else None,
+            "period": mean(series("wave_period_max")),
+            "dir": circular_mean_deg(series("wave_direction_dominant")),
         })
     return out
 
@@ -674,7 +781,7 @@ def summary_data_table(wind_records, sea_records):
         lines.append("Per-model wind_mean_kt on days models disagreed (model_flag above wasn't '-'):")
         for r in wind_records:
             if r.get("flag"):
-                parts = ", ".join(f"{m}={v['wind_mean']}" for m, v in r["per_model"].items())
+                parts = ", ".join(f"{MEDIUM_MODEL_LABELS[m]}={v['wind_mean']}" for m, v in r["per_model"].items())
                 lines.append(f"{r['spot']} {r['date']}: {parts}")
 
     if sea_records:
@@ -723,36 +830,29 @@ PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS})
         "Skip any before/after comparison -- this is the first run, nothing to compare against."
     )
 
-    # === NEW AREA: this whole local-knowledge paragraph is North-Aegean-
-    # specific -- rewrite it (or drop it) for a different area's actual
-    # geography, or the model will confidently apply irrelevant local
-    # effects to a place they don't exist in. ================================
-    local_knowledge = """Local knowledge about these specific spots, for context if relevant -- \
-don't force it in if a day's data doesn't support it: Lemnos and Agios Efstratios sit in the \
-open channel south of the main islands and tend to run windier than the sheltered coastal \
-spots; the Gulf of Saros can locally accelerate a northeasterly into a stronger funneled flow \
-than the open-water reading suggests; Mount Athos's steep terrain can produce local gap/\
-katabatic gusts stronger than the gridded forecast captures; Thracian Sea (open water) and \
-Keramoti/Thassos are the most sheltered, coastal readings."""
-    # ==============================================================================
+    # LOCAL_KNOWLEDGE comes from area.json (optional; empty string if
+    # omitted). Sent as its own paragraph only when non-empty, so a new area
+    # that hasn't written one yet doesn't feed the model an empty heading.
+    local_knowledge_section = f"\n{LOCAL_KNOWLEDGE}\n" if LOCAL_KNOWLEDGE else ""
 
     # Tells the model what it's actually looking at, so it reasons about
     # model_flag/gust correctly instead of assuming a plain single-point
     # forecast. Branches on wind_source_label since EC46 and the medium-range
     # consensus are fetched and combined completely differently.
     if wind_source_label.startswith("Medium-range"):
-        data_methodology = """How the wind/temp/rain/gust figures below were produced: each of the \
-three models (ECMWF IFS, NOAA GFS, DWD ICON) is sampled over a 3x3 grid of points (~30x25km) around \
+        ns_km, ew_km = kernel_span_km()
+        data_methodology = f"""How the wind/temp/rain/gust figures below were produced: each of the \
+models ({MEDIUM_MODELS_LABEL}) is sampled over a 3x3 grid of points (~{ns_km:.0f}x{ew_km:.0f}km) around \
 every spot, not one exact GPS point -- reflecting the patch of sea a boat sailing that spot actually \
 moves through. Wind speed, temperature, rain, and direction are each model's mean across those 9 \
 points; gust is each model's max across those 9 points instead of a mean, since gust is inherently a \
 worst-case figure and averaging it away would hide a real local peak (e.g. a gap-wind gust one grid \
-cell over). The three models' results are then combined the same way on top of that: mean for \
+cell over). The models' results are then combined the same way on top of that: mean for \
 wind/temp/rain/direction, max for gust -- so the gust figure shown is deliberately the strongest plausible \
-gust anywhere in that patch across all three models, a safety margin rather than a literal single-point \
-prediction. model_flag marks a day where the three models disagree by more than 6kt (wind) or 45 \
-degrees (direction, only counted when wind is at least 5kt) -- treat those days' numbers as less \
-certain; the per-model breakdown further down gives the actual spread."""
+gust anywhere in that patch across all models, a safety margin rather than a literal single-point \
+prediction. model_flag marks a day where the models disagree by more than {SPREAD_WIND_KT}kt (wind) or \
+{SPREAD_DIR_DEG} degrees (direction, only counted when wind is at least {DIR_FLAG_MIN_WIND_KT}kt) -- treat \
+those days' numbers as less certain; the per-model breakdown further down gives the actual spread."""
     elif wind_source_label.startswith("EC46"):
         data_methodology = """How the wind/temp/rain figures below were produced: this is ECMWF's own \
 EC46 sub-seasonal 51-member ensemble mean at ~36km resolution -- a single number per spot/day, already \
@@ -763,17 +863,32 @@ far out, not a day-by-day forecast -- the ensemble mean smooths out individual f
         data_methodology = ""
     if sea_records:
         data_methodology += ("\n\nSea state (wave height/period/direction) comes from a single model "
-                              "(Open-Meteo Marine) at one point per spot, not kernelled or multi-model "
-                              "like the wind figures.")
+                              "(Open-Meteo Marine), sampled over the same 3x3 kernel as wind: wave height "
+                              "is the kernel max (same worst-case reasoning as gust -- the roughest cell "
+                              "in the patch, not just the exact point), period/direction are the kernel "
+                              "mean. There's no further models-consensus step on top since Marine is a "
+                              "single model, unlike the wind figures' three-model combine.")
+
+    topics = [
+        "The overall wind regime for the week -- direction, typical strength, how steady vs. variable.",
+        "Which specific days and spots look calmest vs. roughest, and why (cite the actual numbers).",
+        "Any notable rain, temperature swings, or model disagreement (model_flag / per-model spread) -- "
+        "explain what disagreement means for how much to trust that day's number.",
+    ]
+    # Only ask for a local-effects paragraph when area.json actually supplied
+    # one -- otherwise there's no context to draw it from.
+    if LOCAL_KNOWLEDGE:
+        topics.append("Local effects worth watching (from the context above) where the data actually supports it.")
+    topics.append(changed_instruction)
+    topics.append("A closing paragraph of concrete, practical routing/timing advice for the week.")
+    topics_block = "\n".join(f"{i}. {t}" for i, t in enumerate(topics, start=1))
 
     prompt = f"""You are a sailing weather analyst briefing a skipper before a trip. The trip \
-runs {TRIP_START} to {TRIP_END} across these North Aegean spots: {places}. Data source for \
+runs {TRIP_START} to {TRIP_END} across these spots: {places}. Data source for \
 the wind/temp/rain figures below: {wind_source_label}.
 
 {data_methodology}
-
-{local_knowledge}
-
+{local_knowledge_section}
 DATA:
 {summary_data_table(wind_records, sea_records)}
 {previous_section}
@@ -783,13 +898,7 @@ distinct paragraphs (blank line between each). Plain prose only -- no markdown o
 headers, no bullet lists, no **bold** or *italic* emphasis, no numbered list. This will be \
 displayed as plain text, so any markdown characters would show up literally in the output. \
 Paragraph topics:
-1. The overall wind regime for the week -- direction, typical strength, how steady vs. variable.
-2. Which specific days and spots look calmest vs. roughest, and why (cite the actual numbers).
-3. Any notable rain, temperature swings, or model disagreement (model_flag / per-model spread) -- \
-explain what disagreement means for how much to trust that day's number.
-4. Local effects worth watching (from the context above) where the data actually supports it.
-5. {changed_instruction}
-6. A closing paragraph of concrete, practical routing/timing advice for the week.
+{topics_block}
 
 Ground every claim in the actual data above -- do not invent locations, units, or dates not \
 present in it."""
@@ -861,6 +970,14 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
     return {
         "dates": dates, "runStamp": run_stamp, "places": list(SPOTS.keys()),
         "tiers": tiers, "params": params, "sailingSummary": sailing_summary,
+        "pageTitle": PAGE_TITLE, "eyebrow": EYEBROW, "heading": HEADING,
+        "labels": SPOT_LABELS,
+        # For the footer's model-disagreement paragraph -- so it names the
+        # actual configured models/thresholds instead of a hardcoded default
+        # that could be wrong for a different area.json.
+        "mediumModelsLabel": MEDIUM_MODELS_LABEL,
+        "spreadWindKt": SPREAD_WIND_KT, "spreadDirDeg": SPREAD_DIR_DEG,
+        "dirFlagMinWindKt": DIR_FLAG_MIN_WIND_KT,
     }
 
 
@@ -968,12 +1085,13 @@ def main():
 
     print()
     if days_out > MEDIUM_RANGE_DAYS:
-        print(f"Medium-range consensus (ECMWF/GFS/ICON) will start covering the trip from ~{medium_available}.")
+        print(f"Medium-range consensus ({MEDIUM_MODELS_LABEL}) will start covering the trip from ~{medium_available}.")
     else:
-        print("##### Medium-range consensus: mean of ECMWF IFS / NOAA GFS / DWD ICON #####")
-        print(f"Each model sampled over a ~30x25km kernel (3x3 grid, {KERNEL_STEP_DEG} deg step) around "
+        print(f"##### Medium-range consensus: mean of {MEDIUM_MODELS_LABEL} #####")
+        ns_km, ew_km = kernel_span_km()
+        print(f"Each model sampled over a ~{ns_km:.0f}x{ew_km:.0f}km kernel (3x3 grid, {KERNEL_STEP_DEG} deg step) around "
               "every spot, not one point. Wind/temp/rain/direction = kernel mean; gust = kernel max, "
-              "then worst case across the three models. Flag = models disagree on wind "
+              "then worst case across the models. Flag = models disagree on wind "
               f"(>{SPREAD_WIND_KT}kt spread) or direction (>{SPREAD_DIR_DEG}deg spread, wind >= {DIR_FLAG_MIN_WIND_KT}kt). "
               "Per-model detail is in runs.csv.")
         records = []
@@ -993,6 +1111,10 @@ def main():
         print(f"Sea state (wave height/period/direction) will start covering the trip from ~{medium_available}.")
     else:
         print("##### Sea state: significant wave height, period, direction #####")
+        ns_km, ew_km = kernel_span_km()
+        print(f"Same ~{ns_km:.0f}x{ew_km:.0f}km kernel as wind (3x3 grid, {KERNEL_STEP_DEG} deg step): wave height = kernel max "
+              "(worst case, same reasoning as gust); period/direction = kernel mean. Single model "
+              "(Open-Meteo Marine), no models-consensus step on top.")
         print("'-' beyond ~9-10 days out even though this tier is open -- rerun closer in for those days.")
         records = []
         for name, (lat, lon) in SPOTS.items():
@@ -1046,11 +1168,11 @@ def main():
             print("(None of the trip dates are inside the chart horizon yet -- rerun closer to the trip.)")
         chart_tier_live = any_chart
 
-    # Medium-range consensus supersedes EC46 once it's live -- it's three
+    # Medium-range consensus supersedes EC46 once it's live -- it's
     # independent models agreeing (or flagged when they don't), not a single
     # coarse ensemble mean, so prefer it for the dashboard's wind/temp/rain cards.
     if medium_records:
-        wind_records, wind_source_label = medium_records, "Medium-range consensus (ECMWF/GFS/ICON)"
+        wind_records, wind_source_label = medium_records, f"Medium-range consensus ({MEDIUM_MODELS_LABEL})"
     elif ec46_records:
         wind_records, wind_source_label = ec46_records, "EC46 ensemble mean"
     else:
@@ -1060,7 +1182,7 @@ def main():
         {"name": "EC46 extended range", "state": "live" if ec46_records else "pending",
          "note": "51-member ensemble mean" if ec46_records else f"opens ~{ec46_available}"},
         {"name": "Medium-range consensus", "state": "live" if medium_records else "pending",
-         "note": "ECMWF IFS / NOAA GFS / DWD ICON" if medium_records else f"opens ~{medium_available}"},
+         "note": MEDIUM_MODELS_LABEL if medium_records else f"opens ~{medium_available}"},
         {"name": "Sea state", "state": "live" if sea_records else "pending",
          "note": "Open-Meteo Marine" if sea_records else f"opens ~{medium_available}"},
         {"name": "ECMWF synoptic charts", "state": "live" if chart_tier_live else "pending",

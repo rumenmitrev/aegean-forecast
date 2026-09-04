@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- NEW AREA: rename the tab/gallery title -->
-<title>Aegean Forecast</title>
+<!-- Placeholder only -- overwritten from area.json's page_title by JS
+     (document.title = DATA.pageTitle) once the page loads. -->
+<title>Sailing Forecast</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
@@ -21,13 +22,12 @@
     --accent-wash:    rgba(42,120,214,0.10);
     --status-good:    #0ca30c;
     --map-sea:        #c2d4d8;
-    --place-1: #2a78d6;
-    --place-2: #eb6834;
-    --place-3: #1baf7a;
-    --place-4: #eda100;
-    --place-5: #e87ba4;
-    --place-6: #008300;
-    --place-7: #8659c9;
+    /* --place-N (N = 1..however many spots there are) are set by JS
+       (applyPlacePalette(), from PALETTE_LIGHT/PALETTE_DARK below), not
+       hardcoded here -- so adding a spot needs no CSS edit, up to the
+       palette's length (12 by default). They still live as real custom
+       properties (not inline hex), so they stay reactive to a live
+       prefers-color-scheme change the same way every other var here is. */
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -44,13 +44,6 @@
       --accent-wash:    rgba(57,135,229,0.14);
       --status-good:    #0ca30c;
       --map-sea:        #12232b;
-      --place-1: #3987e5;
-      --place-2: #d95926;
-      --place-3: #199e70;
-      --place-4: #c98500;
-      --place-5: #d55181;
-      --place-6: #008300;
-      --place-7: #a67ee0;
     }
   }
   :root[data-theme="dark"] {
@@ -67,13 +60,6 @@
     --accent-wash:    rgba(57,135,229,0.14);
     --status-good:    #0ca30c;
     --map-sea:        #12232b;
-    --place-1: #3987e5;
-    --place-2: #d95926;
-    --place-3: #199e70;
-    --place-4: #c98500;
-    --place-5: #d55181;
-    --place-6: #008300;
-    --place-7: #a67ee0;
   }
 
   * { box-sizing: border-box; }
@@ -262,23 +248,23 @@
 
 <div class="page">
 
-  <!-- NEW AREA/DATES: every string in this <header> is hardcoded to this
-       trip -- <title> above in <head> too. Dates/places aren't pulled from
-       the JSON payload here since this is static shell markup, not JS. -->
+  <!-- Empty here on purpose -- buildHeader() fills eyebrow/h1 from
+       DATA.eyebrow/DATA.heading (area.json's eyebrow/heading), and builds
+       the route line from DATA.dates + each place's short label. -->
   <header class="top">
     <div>
-      <p class="eyebrow">North Aegean &middot; sailing forecast</p>
-      <h1>Thassos &middot; Samothrace &middot; Lemnos</h1>
-      <p class="route">3&ndash;10 October 2026 &middot; Keramoti, Samothrace, Lemnos, Thracian Sea, Gulf of Saros, Agios Efstratios, Mount Athos</p>
+      <p class="eyebrow" id="eyebrow"></p>
+      <h1 id="heading"></h1>
+      <p class="route" id="route"></p>
     </div>
     <div class="run-badge">
       data captured<br><span class="stamp mono" id="run-stamp">&mdash;</span>
     </div>
   </header>
 
-  <!-- NEW AREA: real coastline, built once by fetch_coastline.py (not
-       regenerated per forecast run) -- rerun that script after SPOTS
-       changes. Renders nothing if coastline.json doesn't exist yet. -->
+  <!-- Real coastline, built once by fetch_coastline.py (not regenerated
+       per forecast run) -- rerun that script after area.json's spots
+       change. Renders nothing if coastline.json doesn't exist yet. -->
   <section class="map-card" id="map-card" hidden></section>
 
   <section class="status-strip" id="status-strip"></section>
@@ -290,38 +276,46 @@
   <main id="cards"></main>
 
   <!-- Otherwise area-agnostic -- only touch this if you also rename the
-       script file itself away from aegean_forecast.py, or change the
-       kernel/flag constants in aegean_forecast.py (KERNEL_STEP_DEG,
-       SPREAD_WIND_KT, SPREAD_DIR_DEG, DIR_FLAG_MIN_WIND_KT) -- the numbers
-       below are hand-written to match those, not templated in. -->
+       script file itself away from aegean_forecast.py. Model names/labels
+       and the disagreement thresholds are filled from DATA (area.json's
+       medium_models/spread_wind_kt/spread_dir_deg/dir_flag_min_wind_kt) by
+       buildHeader() -- see the .mm-label/.sw/.sd/.dw spans below. -->
   <footer class="foot">
-    <p><b>Sources:</b> ECMWF EC46 sub-seasonal ensemble mean, medium-range consensus of ECMWF IFS / NOAA GFS /
-    DWD ICON, sea state from Open-Meteo Marine, and synoptic charts from charts.ecmwf.int &mdash; all via
-    <b>aegean_forecast.py</b>. Each place uses its nearest sea grid cell, not land.</p>
+    <p><b>Sources:</b> ECMWF EC46 sub-seasonal ensemble mean, medium-range consensus of
+    <span class="mm-label"></span>, sea state from Open-Meteo Marine, and synoptic charts from
+    charts.ecmwf.int &mdash; all via <b>aegean_forecast.py</b>. Each place uses its nearest sea grid
+    cell, not land.</p>
 
-    <p><b>How the medium-range wind/temp/rain/gust numbers are calculated:</b> each of the three models
-    (ECMWF/GFS/ICON) is sampled over a 3&times;3 grid of points around every place &mdash; roughly
-    30&times;25&nbsp;km, not a single GPS pin &mdash; because a boat sailing that spot experiences the whole
-    patch of sea around it, not one exact point. Wind speed, direction, temperature, and rain are the
-    <b>mean</b> across those 9 points per model, which smooths out single-cell grid noise. Gust is the
-    <b>max</b> across those 9 points instead of the mean &mdash; gust is already a worst-case figure, so
-    averaging it away would blunt a real local spike (a gap-wind gust one grid cell over, say) instead of
-    surfacing it. The three models are then combined the same way on top of that: mean for wind/temp/rain/
-    direction, max for gust &mdash; so the gust shown is the strongest plausible gust anywhere in that patch,
-    across all three models. That makes it a safety margin by design, deliberately higher than "the exact
-    point forecast," not a bug.</p>
+    <p><b>How the medium-range wind/temp/rain/gust numbers are calculated:</b> each of the configured
+    models (<span class="mm-label"></span>) is sampled over a 3&times;3 grid of points around every place
+    &mdash; roughly 30&times;25&nbsp;km, not a single GPS pin &mdash; because a boat sailing that spot
+    experiences the whole patch of sea around it, not one exact point. Wind speed, direction, temperature,
+    and rain are the <b>mean</b> across those 9 points per model, which smooths out single-cell grid noise.
+    Gust is the <b>max</b> across those 9 points instead of the mean &mdash; gust is already a worst-case
+    figure, so averaging it away would blunt a real local spike (a gap-wind gust one grid cell over, say)
+    instead of surfacing it. The models are then combined the same way on top of that: mean for
+    wind/temp/rain/direction, max for gust &mdash; so the gust shown is the strongest plausible gust
+    anywhere in that patch, across all of them. That makes it a safety margin by design, deliberately
+    higher than "the exact point forecast," not a bug.</p>
 
-    <p><b>Model disagreement:</b> a place/day is flagged (&#9888;) when the three models' wind speeds spread
-    by more than 6kt, or their directions by more than 45&deg; while wind is at least 5kt. On a flagged day
-    the wind cell shows the actual min&ndash;max span across models instead of one blended number (a mean of
-    6kt and 20kt would misrepresent both), and the full per-model breakdown always goes into
-    <b>runs.csv</b> and into the data given to the AI summary above, so it can explain what the disagreement
-    means for that day rather than silently averaging past it.</p>
+    <p><b>Model disagreement:</b> a place/day is flagged (&#9888;) when the models' wind speeds spread by
+    more than <span class="sw"></span>, or their directions by more than <span class="sd"></span> while
+    wind is at least <span class="dw"></span>. On a flagged day the wind cell shows the actual
+    min&ndash;max span across models instead of one blended number (a mean of two very different model
+    reads would misrepresent both), and the full per-model breakdown always goes into <b>runs.csv</b> and
+    into the data given to the AI summary above, so it can explain what the disagreement means for that
+    day rather than silently averaging past it.</p>
+
+    <p><b>Sea state</b> (wave height, period, direction) uses the same 3&times;3 kernel as wind, since a
+    boat crossing a patch of sea can meet its roughest cell, not just the exact point: wave height is the
+    <b>kernel max</b> (same worst-case reasoning as gust), period and direction are the kernel mean. Sea
+    state is a single model (Open-Meteo Marine), so there's no further multi-model combine on top like
+    wind has &mdash; the kernel is the only combining step here.</p>
 
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
     day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
-    &sim;36&nbsp;km resolution) and sea state (a single model, Open-Meteo Marine) are each still read at one
-    point, not kernelled like the medium-range consensus above. Rows show the region's actual spread
+    &sim;36&nbsp;km resolution) is the one tier still read at a single point, with no kernel or per-model
+    combine &mdash; it's already someone else's finished ensemble mean. Rows show the region's actual spread
     (sheltered vs. exposed spots), never a single averaged number, since this route crosses both. This page
     regenerates automatically on every run.</p>
   </footer>
@@ -332,8 +326,8 @@
 __DASHBOARD_DATA_JSON__
 </script>
 
-<!-- NEW AREA: null until fetch_coastline.py has been run for this area's
-     SPOTS -- see that script's docstring. -->
+<!-- Null until fetch_coastline.py has been run for this area's spots --
+     see that script's docstring. -->
 <script id="coastline-data" type="application/json">
 __COASTLINE_DATA_JSON__
 </script>
@@ -344,41 +338,50 @@ __COASTLINE_DATA_JSON__
   const DATA = JSON.parse(document.getElementById("dashboard-data").textContent);
   const COASTLINE = JSON.parse(document.getElementById("coastline-data").textContent);
   const PLACES = DATA.places;
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const MONTHS_FULL = ["January","February","March","April","May","June","July",
+                        "August","September","October","November","December"];
+  const PARAM_ORDER = ["wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period"];
+
+  // Short forms for table headers / legend / tooltip -- full names (with
+  // parentheticals) don't fit multi-place-wide without forcing a scroll
+  // every card. Sourced from DATA.labels (area.json's per-spot short/
+  // short_mobile), never auto-abbreviated -- collision-prone, and silently
+  // wrong for odd names (nothing would catch two spots both landing on the
+  // same 3 letters). Full names stay in each place's title attribute.
+  const SHORT = {}, SHORT_MOBILE = {};
+  PLACES.forEach(p => {
+    SHORT[p] = DATA.labels[p].short;
+    SHORT_MOBILE[p] = DATA.labels[p].shortMobile;
+  });
+  // Phone portrait (<=480px): even the SHORT labels above don't fit
+  // multi-place-wide without forced mid-word wrapping ("SAMOTH-RACE"),
+  // which reads as broken rather than tight. Fixed short_mobile codes never
+  // need to wrap at all.
+  const LABELS = window.matchMedia("(max-width: 480px)").matches ? SHORT_MOBILE : SHORT;
+
+  // Hand-tuned palette (12 entries -- extend both arrays together if an
+  // area ever needs more; places beyond this count cycle color reuse
+  // rather than erroring). Applied to --place-N as real CSS custom
+  // properties (not inline hex) so they stay reactive to a live
+  // prefers-color-scheme change the same way every other var here is.
+  const PALETTE_LIGHT = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300",
+                          "#8659c9","#c0392b","#16a3b3","#8e7a3f","#5a67d8","#c2185b"];
+  const PALETTE_DARK  = ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300",
+                          "#a67ee0","#e05a4d","#33b8c9","#a3894f","#7c86e8","#e0498a"];
+  function applyPlacePalette() {
+    const explicit = document.documentElement.getAttribute("data-theme");
+    const dark = explicit === "dark" || (explicit !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const palette = dark ? PALETTE_DARK : PALETTE_LIGHT;
+    PLACES.forEach((p, i) => {
+      document.documentElement.style.setProperty(`--place-${i + 1}`, palette[i % palette.length]);
+    });
+  }
+  applyPlacePalette();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyPlacePalette);
+
   const PLACE_VAR = {};
   PLACES.forEach((p, i) => { PLACE_VAR[p] = `var(--place-${i + 1})`; });
-  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const PARAM_ORDER = ["wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period"];
-  // === NEW AREA: re-key both maps below to the new SPOTS names verbatim
-  // (Python's dict keys, exactly). Any place missing from these maps prints
-  // "undefined" in headers/legend/tooltip instead of failing loudly, so
-  // don't leave a stale key behind. ==========================================
-  // Short forms for table headers / legend / tooltip -- the six full names
-  // (with parentheticals) don't fit six-wide without forcing a scroll every
-  // card. Full names stay in the header route line and in each place's
-  // title attribute.
-  const SHORT = {
-    "Keramoti / Thassos": "Keramoti",
-    "Samothrace (S coast)": "Samothrace",
-    "Lemnos (Myrina)": "Lemnos",
-    "Thracian Sea (open water)": "Thracian Sea",
-    "Gulf of Saros (E of Samothrace)": "Gulf of Saros",
-    "Agios Efstratios (S of Lemnos)": "Ag. Efstratios",
-    "Mount Athos (N approach)": "Mount Athos",
-  };
-  // Phone portrait (<=480px): even the SHORT labels above don't fit six-wide
-  // without forced mid-word wrapping ("SAMOTH-RACE"), which reads as broken
-  // rather than tight. Fixed 3-letter codes never need to wrap at all.
-  const SHORT_MOBILE = {
-    "Keramoti / Thassos": "Ker",
-    "Samothrace (S coast)": "Sam",
-    "Lemnos (Myrina)": "Lem",
-    "Thracian Sea (open water)": "Thr",
-    "Gulf of Saros (E of Samothrace)": "Sar",
-    "Agios Efstratios (S of Lemnos)": "Efs",
-    "Mount Athos (N approach)": "Ath",
-  };
-  // ==============================================================================
-  const LABELS = window.matchMedia("(max-width: 480px)").matches ? SHORT_MOBILE : SHORT;
 
   function dateLabel(iso, first) {
     const parts = iso.split("-").map(Number);
@@ -389,7 +392,21 @@ __COASTLINE_DATA_JSON__
     const [datePart, timePart] = iso.split("T");
     const [y, m, d] = datePart.split("-").map(Number);
     const hm = timePart.slice(0, 5);
-    return `${d} ${MONTHS[m - 1]} ${y}, ${hm} Athens time`;
+    return `${d} ${MONTHS[m - 1]} ${y}, ${hm} local time`;
+  }
+  function dateRangeLabel(startIso, endIso) {
+    const [sy, sm, sd] = startIso.split("-").map(Number);
+    const [ey, em, ed] = endIso.split("-").map(Number);
+    if (sy === ey && sm === em) return `${sd}–${ed} ${MONTHS_FULL[sm - 1]} ${sy}`;
+    if (sy === ey) return `${sd} ${MONTHS_FULL[sm - 1]} – ${ed} ${MONTHS_FULL[em - 1]} ${sy}`;
+    return `${sd} ${MONTHS_FULL[sm - 1]} ${sy} – ${ed} ${MONTHS_FULL[em - 1]} ${ey}`;
+  }
+  // Terse form for card subtitles ("3–10 Oct", no year -- these already sit
+  // next to a run stamp that has the year).
+  function shortDateRangeLabel(startIso, endIso) {
+    const [, sm, sd] = startIso.split("-").map(Number);
+    const [, em, ed] = endIso.split("-").map(Number);
+    return sm === em ? `${sd}–${ed} ${MONTHS[sm - 1]}` : `${sd} ${MONTHS[sm - 1]} – ${ed} ${MONTHS[em - 1]}`;
   }
   function niceScale(min, max) {
     if (min === max) { min -= 1; max += 1; }
@@ -422,6 +439,24 @@ __COASTLINE_DATA_JSON__
     const e = document.createElementNS(SVGNS, tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
     return e;
+  }
+
+  function buildHeader() {
+    document.title = DATA.pageTitle;
+    document.getElementById("eyebrow").textContent = DATA.eyebrow;
+    document.getElementById("heading").textContent = DATA.heading;
+    // Full names (via SHORT, not the responsive/mobile LABELS) so the route
+    // line reads as a place list regardless of viewport width.
+    const places = PLACES.map(p => SHORT[p]).join(", ");
+    const range = dateRangeLabel(DATA.dates[0], DATA.dates[DATA.dates.length - 1]);
+    document.getElementById("route").textContent = `${range} · ${places}`;
+  }
+
+  function buildFooter() {
+    document.querySelectorAll(".mm-label").forEach(el => { el.textContent = DATA.mediumModelsLabel; });
+    document.querySelector(".sw").textContent = `${DATA.spreadWindKt}kt`;
+    document.querySelector(".sd").textContent = `${DATA.spreadDirDeg}°`;
+    document.querySelector(".dw").textContent = `${DATA.dirFlagMinWindKt}kt`;
   }
 
   function buildSummary() {
@@ -719,7 +754,7 @@ __COASTLINE_DATA_JSON__
     titleWrap.appendChild(title);
     const unit = document.createElement("div");
     unit.className = "card-unit";
-    unit.textContent = param.unit + " · " + param.sourceLabel + ", 3–10 Oct";
+    unit.textContent = param.unit + " · " + param.sourceLabel + ", " + shortDateRangeLabel(DATA.dates[0], DATA.dates[DATA.dates.length - 1]);
     titleWrap.appendChild(unit);
     head.appendChild(titleWrap);
 
@@ -790,7 +825,7 @@ __COASTLINE_DATA_JSON__
     titleWrap.appendChild(title);
     const unit = document.createElement("div");
     unit.className = "card-unit";
-    unit.textContent = param.sourceLabel + ", 3–10 Oct";
+    unit.textContent = param.sourceLabel + ", " + shortDateRangeLabel(DATA.dates[0], DATA.dates[DATA.dates.length - 1]);
     titleWrap.appendChild(unit);
     head.appendChild(titleWrap);
     card.appendChild(head);
@@ -875,6 +910,8 @@ __COASTLINE_DATA_JSON__
     return card;
   }
 
+  buildHeader();
+  buildFooter();
   buildSummary();
   buildMap();
   buildStatusStrip();

@@ -1,96 +1,35 @@
 # To-do / future improvements
 
-## Config-driven area/spots/dates (no code edits to switch area)
+## Chart tier (tier 4) is single-model (ECMWF) by design, not a gap to close
 
-Currently switching areas means hand-editing constants in
-`aegean_forecast.py` and strings/maps in `dashboard_template.html` (see the
-`# === NEW AREA` markers and `README.md`'s setup guide). Goal: replace that
-with a single JSON (or txt) config file the script loads at startup.
+`chart_for_date()` pulls a real rendered synoptic chart (MSLP + 850hPa wind)
+from `charts.ecmwf.int` -- ECMWF's own public chart-rendering service, IFS
+only. Asked whether GFS/ICON charts could be added the same way medium-range
+combines all three models (tier 2): **checked live, they can't be, cheaply**:
 
-**Config file** (e.g. `area.json`), schema:
-```json
-{
-  "trip_start": "2026-10-03",
-  "trip_end": "2026-10-10",
-  "timezone": "Europe/Athens",
-  "chart_projection": "opencharts_south_east_europe",
-  "edgeone_project_name": "aegean-forecast",
-  "page_title": "Aegean Forecast",
-  "eyebrow": "North Aegean · sailing forecast",
-  "heading": "Thassos · Samothrace · Lemnos",
-  "spots": [
-    {"name": "Keramoti / Thassos", "lat": 40.85, "lon": 24.70,
-     "short": "Keramoti", "short_mobile": "Ker"},
-    ...
-  ]
-}
-```
+- No equivalent documented, stable, region-selectable chart API exists for
+  the other two models. `charts.ecmwf.int`'s opencharts API (structured
+  JSON, per-date lookup, named region codes) is the unusual one here, not
+  the norm.
+- NOAA/WPC publishes surface analysis charts, but only via an archive
+  *webpage* (https://www.wpc.ncep.noaa.gov/archives/web_pages/sfc/sfc_archive_zoom.php),
+  not a documented API -- would mean reverse-engineering URLs from a
+  human-facing page with no stability guarantee. Worse: WPC's surface
+  analysis is North-America-focused and may not even cover the North
+  Aegean at all.
+- DWD has no rendered-chart endpoint in its public offerings at all --
+  Bright Sky (brightsky.dev) and Open-Meteo's DWD API give numeric/JSON
+  data (already what tiers 1-3 use), and DWD's own Open Data Server
+  (opendata.dwd.de) serves raw GRIB model data, not pre-rendered images.
 
-**`aegean_forecast.py` changes:**
-- Load the config once near the top; replace the hardcoded `TRIP_START`,
-  `TRIP_END`, `TRIP_TZ`, `SPOTS`, `CHART_PROJECTION`, `EDGEONE_PROJECT_NAME`
-  assignments with values read from it. Low risk -- these are already
-  isolated module-level constants (that's why the `# === NEW AREA` markers
-  could point at them precisely), so everything downstream keeps working
-  unchanged as long as the names/types stay the same.
-- `build_dashboard_payload()` needs to also pass through `page_title`,
-  `eyebrow`, `heading`, and each spot's `short`/`short_mobile` labels, so
-  the template has zero hardcoded per-area strings left.
-- `generate_sailing_summary()`'s `local_knowledge` paragraph (North-Aegean-
-  specific sailing effects -- channel funneling, gap winds, which spots are
-  sheltered) is hardcoded prose fed straight into the Claude prompt -- add
-  an optional `local_knowledge` string field to the config schema (empty/
-  absent means the prompt just skips that paragraph) instead of requiring a
-  code edit to rewrite or drop it per area.
-- `KERNEL_STEP_DEG` (medium-range kernel size, currently a fixed 0.15 deg /
-  ~30x25 km for every spot) is geography-dependent, not area-specific in the
-  same sense as the above -- a tighter archipelago or a coastline with
-  sharper local terrain might want a smaller kernel than a stretch of open
-  water. Not urgent enough to block the config work, but worth an optional
-  `kernel_step_deg` config field (default 0.15) if a future area's spots
-  turn out to need a different size than this one.
-
-**`dashboard_template.html` changes:**
-- Replace the static `<title>`, `.eyebrow`, `<h1>`, `.route` text with JS
-  that fills them from `DATA` at render time (route line can be generated
-  from the places list plus trip dates, no need to hand-author it).
-- Replace the hardcoded `SHORT` / `SHORT_MOBILE` JS objects with lookups
-  into `DATA.params`/a new `DATA.labels` structure sourced from the config's
-  per-spot `short`/`short_mobile` fields.
-- **Design decision, already made:** do NOT auto-abbreviate place names
-  algorithmically for `short`/`short_mobile` -- collision-prone and
-  produces silently-bad output for odd names (nothing catches "two spots
-  both abbreviate to the same 3 letters"). Require the config to specify
-  both labels explicitly per spot instead.
-- Replace the fixed `--place-1` through `--place-7` CSS custom properties
-  with a larger (10-12 entry) hand-tuned color palette array indexed in JS,
-  so adding a spot (up to that count) needs no CSS edit at all.
-
-**Stays manual, on purpose:**
-- `fetch_coastline.py` still needs a one-time run per area -- real
-  coastline geometry for a new region has to come from somewhere (OSM/
-  Overpass), a config file can't substitute for that fetch.
-- EdgeOne project identity / GitHub repo / Actions cron schedule -- these
-  are about *where* it deploys and *when* it's automated, not what data it
-  shows, and should stay a deliberate step rather than config-driven.
-
-**Estimated effort:** a few focused hours, not a rewrite -- mechanical
-constant/string relocation plus one JS refactor (header + label rendering),
-no architectural changes to the fetch/log/render/deploy pipeline itself.
-
-## Sea-state kernel (wave height) -- same idea as the wind kernel, not done yet
-
-The medium-range wind kernel (`kernel_points()` / `extract_medium_records()`)
-samples each model over a 3x3 grid around every spot instead of one point --
-mean for wind/temp/rain/direction, max for gust (a boat sails through a patch
-of sea, not a GPS pin, and gust specifically shouldn't be averaged away).
-Sea state (`extract_sea_state_records()`) is still single-point, single-model
-(Open-Meteo Marine has no multi-model consensus step to piggyback the kernel
-logic onto, which is why it wasn't included when the wind kernel was added).
-The same reasoning plausibly applies to significant wave height near capes/
-channels, where wave state can vary sharply over a short distance -- worth a
-small follow-up: kernel-MAX for wave height (worst case, same logic as gust),
-kernel-mean or leave single-point for period/direction (less clearly a
-"worst case" quantity). Low effort -- `sea_state()`/`extract_sea_state_records()`
-would follow the same `kernel_points()` + one-HTTP-call-for-9-points pattern
-already proven out for `medium_range()`.
+Real alternative, if this is ever revisited: not "add 2 more chart sources"
+but either (a) scrape the undocumented NOAA archive page and accept the
+region-coverage risk, or (b) build an actual chart-rendering pipeline from
+raw gridded data (matplotlib/cartopy, contouring, projection handling) for
+GFS/ICON -- a real standalone project, not a small addition. Also note:
+even with all three, "averaging" rendered chart images the way tier 2
+averages numbers isn't well-defined -- overlaying three models' pressure
+contours doesn't produce a readable consensus front; a true multi-model
+chart consensus would mean averaging raw gridded MSLP fields *before*
+contouring, not blending finished images. Decided not worth the risk of
+touching the working single-chart tier for this -- leaving as ECMWF-only.

@@ -4,13 +4,18 @@ Fetch, stitch, simplify, and clip real OpenStreetMap coastline data for the
 dashboard's map card -- run this ONCE per area (not per forecast run; unlike
 runs.csv/dashboard.html, coastline.json only changes when SPOTS changes).
 
-New area: after updating SPOTS in aegean_forecast.py, rerun this script to
-regenerate coastline.json. It reads SPOTS directly, so no separate config to
-keep in sync. Needs `pip install shapely` (not a runtime dependency of
-aegean_forecast.py itself, only of this one-off tool).
+New area: after updating the spots list in area.json, rerun this script to
+regenerate coastline.json. It reads SPOTS from aegean_forecast.py (which
+itself loads from area.json), so there's nothing separate to keep in sync.
+Needs `pip install shapely` (not a runtime dependency of aegean_forecast.py
+itself, only of this one-off tool).
 
 Usage:
     python3 fetch_coastline.py [--pad-lon 0.55] [--pad-lat 0.45]
+
+--pad-lon/--pad-lat default to area.json's map_pad_lon/map_pad_lat (0.55/0.45
+if that area.json omits them) -- pass either flag explicitly to override
+just for this run without editing the config.
 """
 import argparse
 import json
@@ -20,7 +25,7 @@ import requests
 from shapely.geometry import LineString, MultiLineString, box
 from shapely.ops import linemerge
 
-from aegean_forecast import SPOTS
+from aegean_forecast import SPOTS, load_area_config
 
 OUT_PATH = pathlib.Path(__file__).resolve().parent / "coastline.json"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -82,9 +87,10 @@ def clip_to_view(parts, minlon, minlat, maxlon, maxlat):
 
 
 def main():
+    area = load_area_config()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pad-lon", type=float, default=0.55)
-    ap.add_argument("--pad-lat", type=float, default=0.45)
+    ap.add_argument("--pad-lon", type=float, default=area.get("map_pad_lon", 0.55))
+    ap.add_argument("--pad-lat", type=float, default=area.get("map_pad_lat", 0.45))
     args = ap.parse_args()
 
     south, west, north, east = query_bbox()

@@ -26,40 +26,49 @@ Automated via a scheduled GitHub Actions workflow (`.github/workflows/forecast.y
 
 ## How the numbers are calculated
 
-The medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON, the tier that's live from ~15 days
-out) doesn't read a single point per spot. Each model is sampled over a **3x3 grid kernel**
-(`KERNEL_STEP_DEG = 0.15`, ~30x25 km at these latitudes) around every spot -- a boat sailing a
-spot moves through that whole patch of sea, not one exact GPS pin. Open-Meteo batches all 9
-points into one HTTP call per model set, so the wider kernel costs nothing extra in requests.
+The medium-range consensus (`area.json`'s `medium_models`, three global models by default -- the
+tier that's live from ~15 days out) doesn't read a single point per spot. Each model is sampled
+over a **3x3 grid kernel** (`area.json`'s `kernel_step_deg`, default `0.15` -> ~30x25 km at these
+latitudes) around every spot -- a boat sailing a spot moves through that whole patch of sea, not
+one exact GPS pin. Open-Meteo batches all 9 points into one HTTP call per model set, so the wider
+kernel costs nothing extra in requests.
 
 - **Wind speed, temperature, rain, direction**: each model's **mean** across the 9 kernel points --
   smooths single-cell grid noise for values that vary smoothly in space.
 - **Gust**: each model's **max** across the 9 kernel points instead of the mean -- gust is already
   a worst-case figure, so averaging it away would blunt a real local peak (e.g. a gap-wind gust one
   grid cell over) instead of surfacing it.
-- The three models' kernel-combined values are then **combined the same way on top of that**: mean
-  for wind/temp/rain/direction, max for gust across the three models. So the gust shown is
-  deliberately the strongest plausible gust anywhere in that ~30x25 km patch, across all three
-  models -- a safety margin, not a literal single-point prediction.
-- **Model disagreement**: a place/day is flagged when the three models' wind speeds spread by more
-  than `SPREAD_WIND_KT` (6kt), or their directions by more than `SPREAD_DIR_DEG` (45deg) while wind
-  is at least `DIR_FLAG_MIN_WIND_KT` (5kt). Flagged days show the actual min-max span instead of a
-  blended mean, and the full per-model breakdown always goes to `runs.csv` and to the Claude prompt.
+- Each model's kernel-combined values are then **combined the same way across models**: mean
+  for wind/temp/rain/direction, max for gust. So the gust shown is deliberately the strongest
+  plausible gust anywhere in that ~30x25 km patch, across every configured model -- a safety
+  margin, not a literal single-point prediction.
+- **Model disagreement**: a place/day is flagged when the models' wind speeds spread by more
+  than `area.json`'s `spread_wind_kt` (default 6kt), or their directions by more than
+  `spread_dir_deg` (default 45deg) while wind is at least `dir_flag_min_wind_kt` (default 5kt).
+  Flagged days show the actual min-max span instead of a blended mean, and the full per-model
+  breakdown always goes to `runs.csv` and to the Claude prompt.
 
-EC46 (the coarser, farther-out tier) and sea state (Open-Meteo Marine) are each still read at a
-single point with no per-model combining -- EC46 is already ECMWF's own 51-member ensemble mean,
-and sea state has no models-consensus step to extend the kernel/max logic into. The dashboard's
-footer explains all of this in plain language for a reader, and the Claude prompt in
-`generate_sailing_summary()` gets its own methodology paragraph (branched by tier) so the AI
-summary reasons about `model_flag`/gust correctly instead of assuming a plain point forecast.
+Sea state (wave height, period, direction; Open-Meteo Marine) uses the same 3x3 kernel and the
+same max-vs-mean split: **wave height is the kernel max** (a boat crossing this patch of sea can
+meet its roughest cell, not just the exact point -- the same reasoning as gust), **period and
+direction are the kernel mean**. Marine is a single model, so unlike wind there's no further
+multi-model combine on top -- the kernel is the only combining step for sea state.
+
+EC46 (the coarser, farther-out tier) is the one tier still read at a single point with no kernel
+or per-model combining at all -- it's already ECMWF's own finished 51-member ensemble mean, so
+there's nothing to kernel-combine. The dashboard's footer explains all of this in plain language
+for a reader, and the Claude prompt in `generate_sailing_summary()` gets its own methodology
+paragraph (branched by tier, plus a sea-state note) so the AI summary reasons about
+`model_flag`/gust/wave correctly instead of assuming a plain point forecast.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `aegean_forecast.py` | The pipeline: fetch, log, render, deploy |
-| `dashboard_template.html` | Static HTML/CSS/JS shell; `aegean_forecast.py` fills in the data |
-| `fetch_coastline.py` | One-off tool: fetches real OSM coastline for the map card (rerun only when `SPOTS` changes) |
+| `area.json` | Everything specific to this area/trip: dates, timezone, spots, header text, chart region, EdgeOne project name -- see "Setting up a new area" below |
+| `dashboard_template.html` | Static HTML/CSS/JS shell; `aegean_forecast.py` fills in the data (including header text and place labels, sourced from `area.json`) |
+| `fetch_coastline.py` | One-off tool: fetches real OSM coastline for the map card (rerun only when `area.json`'s spots change) |
 | `runs.csv` | Historical log, one row per place/day/tier/run |
 | `dashboard.html` / `site/index.html` | Generated output (the latter is what actually gets deployed) |
 | `coastline.json` | Generated by `fetch_coastline.py`; embedded into the dashboard |
@@ -92,49 +101,110 @@ rm -f edgeone_token.txt tencentcloud_credentials.env anthropic_api_key.txt   # n
 You'll reinstall `node_modules` (step 5) and regenerate everything else
 (steps 4-10) fresh.
 
-### 2. Edit `aegean_forecast.py`
+### 2. Edit `area.json`
 
-Every block that needs a change is marked `# === NEW AREA` inline -- search
-for that string to find them all. Concretely:
+This is the only file that needs new-area content -- no code edits, no
+HTML edits. It supports plain `//` line comments despite the `.json`
+extension (`aegean_forecast.py` strips them before parsing -- see
+`strip_json_comments()`), so the shipped file documents every field inline;
+a strict JSON linter will flag those comments as invalid even though the
+pipeline reads the file fine. Fields:
 
-- **`TRIP_START` / `TRIP_END` / `TRIP_TZ`** -- the new dates and an IANA
+```json
+{
+  "trip_start": "2026-10-03",
+  "trip_end": "2026-10-10",
+  "timezone": "Europe/Athens",
+  "chart_projection": "opencharts_south_east_europe",
+  "edgeone_project_name": "aegean-forecast",
+  "page_title": "Aegean Forecast",
+  "eyebrow": "North Aegean · sailing forecast",
+  "heading": "Thassos · Samothrace · Lemnos",
+  "medium_models": [
+    {"code": "ecmwf_ifs", "label": "ECMWF IFS"},
+    {"code": "gfs_seamless", "label": "NOAA GFS"},
+    {"code": "icon_seamless", "label": "DWD ICON"}
+  ],
+  "spread_wind_kt": 6,
+  "spread_dir_deg": 45,
+  "dir_flag_min_wind_kt": 5,
+  "kernel_step_deg": 0.15,
+  "map_pad_lon": 0.55,
+  "map_pad_lat": 0.45,
+  "local_knowledge": "...",
+  "spots": [
+    {"name": "Keramoti / Thassos", "lat": 40.85, "lon": 24.70,
+     "short": "Keramoti", "short_mobile": "Ker"}
+  ]
+}
+```
+
+- **`trip_start` / `trip_end` / `timezone`** -- ISO dates and an IANA
   timezone name for the new area (e.g. `"America/Nassau"` for the Bahamas).
-  `TRIP_TZ` alone drives every date computation *and* is passed to
-  Open-Meteo as `TRIP_TZ.key`, so this one constant is the only place to
-  change it.
-- **`SPOTS`** -- the new places as `"Name": (lat, lon)` pairs. Count doesn't
-  have to stay the same -- see step 3 for what changes if it doesn't.
-- **`CHART_PROJECTION`** -- the ECMWF opencharts region code covering the
+  `timezone` alone drives every date computation *and* is passed to
+  Open-Meteo, so this one field is the only place to change it.
+- **`chart_projection`** -- the ECMWF opencharts region code covering the
   new area. To find the valid list: temporarily call
   `opencharts_product(CHART_PRODUCT, "2099-01-01T00:00:00Z")` (an
   obviously-invalid date) from a `python3 -i` shell -- the error message
   lists every valid projection code. Pick the one that covers the new area.
-- **`EDGEONE_PROJECT_NAME`** -- give it a new name. Reusing the old one
+- **`edgeone_project_name`** -- give it a new name. Reusing the old one
   overwrites the live site for the original area instead of creating a
   second one.
-- **`local_knowledge`** inside `generate_sailing_summary()` -- a paragraph of
-  North-Aegean-specific sailing effects (channel funneling, gap winds, which
-  spots are sheltered) fed to the AI summary prompt. Rewrite it for the new
-  area's actual geography, or drop it -- leaving it as-is means the model
-  confidently applies Aegean-specific effects to a place they don't exist in.
+- **`page_title` / `eyebrow` / `heading`** -- the dashboard's tab title,
+  small caps label, and big `<h1>`. The route line under them (dates + place
+  list) is generated automatically from `trip_start`/`trip_end` and each
+  spot's `short` label -- nothing to write by hand for that part.
+- **`medium_models`** -- which independent models feed the medium-range
+  consensus tier. Each entry's `code` is the exact Open-Meteo model
+  identifier (fed to the API call and written to `runs.csv`'s `model`
+  column); `label` is the human-readable name shown in console output, the
+  dashboard, and the Claude prompt. A different area might have
+  better-skilled regional models worth using instead of these three global
+  ones -- console output, the dashboard footer, and the Claude prompt all
+  read this list, not a hardcoded name, so changing it needs no other edit.
+- **`spread_wind_kt` / `spread_dir_deg` / `dir_flag_min_wind_kt`** (optional,
+  defaults `6`/`45`/`5`) -- the model-disagreement flag thresholds (see "How
+  the numbers are calculated" above). A calmer/steadier cruising ground
+  might reasonably want tighter thresholds than this route's mix of open
+  channel and sheltered coast.
+- **`spots`** -- the new places, each with `lat`/`lon` plus explicit
+  `short`/`short_mobile` labels (table headers, legend, map pins, and phone-
+  width columns respectively). Labels are never auto-abbreviated --
+  collision-prone and silently wrong for odd names (nothing would catch two
+  spots both landing on the same 3 letters) -- so write both by hand.
+  Up to 12 spots need no other change; see step 3 for more than that.
+- **`kernel_step_deg`** (optional, default `0.15`) -- the medium-range/sea-
+  state kernel size in degrees (see "How the numbers are calculated" above).
+  Only worth changing if the new area's geography is much tighter or looser
+  than this route's mix of open water and coast.
+- **`map_pad_lon` / `map_pad_lat`** (optional, default `0.55`/`0.45`) --
+  how far past the spots (in degrees) `fetch_coastline.py` extends the map
+  view. A tightly clustered set of spots wants less padding than a
+  spread-out route; see step 4's sanity-check note if a pin ends up too
+  close to the map's edge or a landmass gets cut off.
+- **`local_knowledge`** (optional, default empty) -- a paragraph of
+  area-specific sailing effects (channel funneling, gap winds, which spots
+  are sheltered) fed to the AI summary prompt. Leave it out entirely for a
+  new area until you've written a real one -- an empty/missing field just
+  skips that paragraph, rather than feeding the model North-Aegean-specific
+  effects for a place they don't exist in.
 
-### 3. Edit `dashboard_template.html`
+### 3. Edit `dashboard_template.html` (usually nothing to do here)
 
-- The static header block (`<title>`, `.eyebrow`, `<h1>`, `.route` line) --
-  hardcoded strings, marked with an HTML comment where they start.
-- **`SHORT`** and **`SHORT_MOBILE`** -- re-key both to the exact new `SPOTS`
-  names (copy-paste the keys from `SPOTS` to avoid typos). A place missing
-  from either map silently prints "undefined" in the UI instead of erroring,
-  so double-check nothing was left out.
-- **CSS `--place-N` variables** (three theme blocks: light `:root`, the
-  `prefers-color-scheme: dark` media query, and `:root[data-theme="dark"]`)
-  -- only touch these if the new area has **more** spots than the current
-  project supports. Check the highest existing `--place-N` number in the
-  file; add a `--place-(N+1)` triplet (one value per theme block, light and
-  dark can differ) for each additional spot. Fewer spots than slots is
-  fine, the extras just go unused.
-- Footer -- generic, no change needed unless you also rename the script
-  file away from `aegean_forecast.py`.
+Only touch this file if:
+- **More than 12 spots** -- `PALETTE_LIGHT`/`PALETTE_DARK` in the `<script>`
+  (search for `applyPlacePalette`) have 12 hand-tuned colors; add a matching
+  pair of hex values to both arrays for each spot beyond that, or extra
+  spots cycle color reuse instead of erroring.
+- **Renaming the script file** away from `aegean_forecast.py`, or **changing
+  the kernel/flag constants** (`area.json`'s `kernel_step_deg`, or
+  `aegean_forecast.py`'s `SPREAD_WIND_KT`/`SPREAD_DIR_DEG`/
+  `DIR_FLAG_MIN_WIND_KT`) -- the footer's explanatory numbers are
+  hand-written to match those, not templated in.
+
+Everything else (title, header text, route line, `SHORT`/`SHORT_MOBILE`
+labels, place colors) is already sourced from `area.json` at render time.
 
 ### 4. Regenerate the coastline map
 
@@ -144,17 +214,19 @@ python3 fetch_coastline.py
 ```
 
 This queries OpenStreetMap's Overpass API for real coastline in a box
-around the new `SPOTS`, simplifies it, and writes `coastline.json`. It
-reads `SPOTS` directly from `aegean_forecast.py`, so there's nothing to
-configure -- just rerun it whenever `SPOTS` changes. `shapely` is only
-needed for this one-off tool, not for `aegean_forecast.py` itself.
+around `area.json`'s spots, simplifies it, and writes `coastline.json`. It
+reads the spots from `aegean_forecast.py` (which itself loads `area.json`),
+so there's nothing separate to configure -- just rerun it whenever the
+spots change. `shapely` is only needed for this one-off tool, not for
+`aegean_forecast.py` itself.
 
 Sanity-check the result before trusting it: open `dashboard.html` (after
 step 8) and look at the map card -- coastlines should actually resemble the
 real area, pins should land on/near their real locations. If a pin sits in
-open water or a big landmass is missing, the padding in
-`fetch_coastline.py`'s `--pad-lon`/`--pad-lat` args (default 0.55/0.45
-degrees) may need adjusting for the new area's geography.
+open water or a big landmass is missing, adjust `area.json`'s
+`map_pad_lon`/`map_pad_lat` (default 0.55/0.45 degrees if omitted) for the
+new area's geography -- or pass `--pad-lon`/`--pad-lat` to override just
+for one run without editing the config.
 
 ### 5. Reinstall the EdgeOne CLI locally
 
@@ -245,11 +317,13 @@ workflow so the two don't both fire.
 
 ### Quick checklist
 
-- [ ] `aegean_forecast.py`: `TRIP_START`, `TRIP_END`, `TRIP_TZ`, `SPOTS`,
-      `CHART_PROJECTION`, `EDGEONE_PROJECT_NAME`, `local_knowledge` (rewrite
-      or drop the North-Aegean-specific sailing effects)
-- [ ] `dashboard_template.html`: header text, `SHORT`, `SHORT_MOBILE`,
-      `--place-N` slots (only if spot count grew)
+- [ ] `area.json`: dates, timezone, chart projection, EdgeOne project name,
+      page title/eyebrow/heading, `medium_models`, spots (with explicit
+      `short`/`short_mobile` per spot), optional `spread_wind_kt`/
+      `spread_dir_deg`/`dir_flag_min_wind_kt`/`kernel_step_deg`/
+      `map_pad_lon`/`map_pad_lat`/`local_knowledge`
+- [ ] `dashboard_template.html`: only if more than 12 spots (extend the
+      palette arrays) -- everything else is already `area.json`-driven
 - [ ] `pip install shapely && python3 fetch_coastline.py` -- verify the map
       visually
 - [ ] `npm install edgeone`
