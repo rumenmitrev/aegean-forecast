@@ -586,14 +586,20 @@ def opencharts_product(product, valid_time=None, projection=CHART_PROJECTION):
     params = {"projection": projection}
     if valid_time:
         params["valid_time"] = valid_time
-    r = requests.get(f"https://charts.ecmwf.int/opencharts-api/v1/products/{product}/",
-                      params=params, timeout=30)
-    if r.status_code in (400, 404):
-        # These carry a JSON error body (e.g. the list of valid timestamps)
-        # that chart_for_date needs -- don't let raise_for_status() eat it.
+    url = f"https://charts.ecmwf.int/opencharts-api/v1/products/{product}/"
+    for attempt in range(4):
+        r = requests.get(url, params=params, timeout=30)
+        if r.status_code == 429 and attempt < 3:
+            wait = int(r.headers.get("Retry-After", 10 * (2 ** attempt)))
+            print(f"  ECMWF 429 rate-limit; waiting {wait}s (retry {attempt + 1}/3)...", file=sys.stderr)
+            time.sleep(wait)
+            continue
+        if r.status_code in (400, 404):
+            # These carry a JSON error body (e.g. the list of valid timestamps)
+            # that chart_for_date needs -- don't let raise_for_status() eat it.
+            return r.json()
+        r.raise_for_status()
         return r.json()
-    r.raise_for_status()
-    return r.json()
 
 
 def chart_link(data):

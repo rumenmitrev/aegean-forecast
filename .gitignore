@@ -14,3 +14,5 @@ cron.log
 # Ephemeral per-run ECMWF chart PNGs -- regenerate every run, would bloat
 # history; not durable data like runs.csv
 charts/
+
+.playwright-mcp/
