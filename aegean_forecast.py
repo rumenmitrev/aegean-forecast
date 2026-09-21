@@ -717,6 +717,8 @@ def extract_medium_records(name, cells):
             if any(x is not None and x > SPREAD_DIR_DEG for x in diffs):
                 flags.append("dir")
 
+        dir_diffs = [angular_diff(a, b) for idx, a in enumerate(dirs) for b in dirs[idx + 1:]]
+        max_dir_diff = max((x for x in dir_diffs if x is not None), default=None)
         out.append({
             "spot": name, "date": day,
             "wind_mean": mean([v["wind_mean"] for v in per_model.values()]),
@@ -730,7 +732,9 @@ def extract_medium_records(name, cells):
             # min-max across models -- shown instead of the bare mean when the
             # "wind" flag fires, since e.g. mean(6, 20) = 13 misrepresents both.
             "wind_span": (min(speeds), max(speeds)) if speeds else None,
-            "per_model": per_model,  # raw breakdown, for the CSV log only
+            "gust_span": (min(gusts), max(gusts)) if len(gusts) >= 2 else None,
+            "dir_spread": round(max_dir_diff) if max_dir_diff is not None else None,
+            "per_model": per_model,  # raw breakdown, for the CSV and popup
         })
     return out
 
@@ -1140,6 +1144,70 @@ present in it."""
     return text.strip() or None
 
 
+def generate_disagreement_notes(wind_records):
+    """Call Claude once with all flagged spot/date pairs and return a dict
+    keyed by 'spot|||date' with a 1-3 sentence explanation of what the model
+    disagreement means in practice. Returns {} if no flagged records, no API
+    key, or if the call fails -- the popup just omits the AI note section."""
+    flagged = [r for r in wind_records if r.get("flag")]
+    if not flagged:
+        return {}
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key and ANTHROPIC_API_KEY_FILE.exists():
+        api_key = ANTHROPIC_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    if not api_key:
+        return {}
+
+    lines = ["spot,date,flag,wind_spread_kt,dir_spread_deg,gust_spread_kt," +
+             ",".join(f"{MEDIUM_MODEL_LABELS[m]}_wind_kt" for m in MEDIUM_MODELS) + "," +
+             ",".join(f"{MEDIUM_MODEL_LABELS[m]}_dir" for m in MEDIUM_MODELS) + "," +
+             ",".join(f"{MEDIUM_MODEL_LABELS[m]}_gust_kt" for m in MEDIUM_MODELS)]
+    for r in flagged:
+        pm = r.get("per_model", {})
+        ws = r.get("wind_span")
+        gs = r.get("gust_span")
+        wind_spread = round(ws[1] - ws[0]) if ws else ""
+        gust_spread = round(gs[1] - gs[0]) if gs else ""
+        dir_spread = r.get("dir_spread") or ""
+        w_vals = ",".join(str(round(pm[m]["wind_mean"])) if pm.get(m) and pm[m].get("wind_mean") is not None else "" for m in MEDIUM_MODELS)
+        d_vals = ",".join(deg_to_compass(pm[m]["dir"]) if pm.get(m) and pm[m].get("dir") is not None else "" for m in MEDIUM_MODELS)
+        g_vals = ",".join(str(round(pm[m]["gust"])) if pm.get(m) and pm[m].get("gust") is not None else "" for m in MEDIUM_MODELS)
+        lines.append(f"{r['spot']},{r['date']},{r['flag']},{wind_spread},{dir_spread},{gust_spread},{w_vals},{d_vals},{g_vals}")
+    table = "\n".join(lines)
+
+    prompt = f"""You are a sailing weather analyst. For each row in the table below, write exactly \
+1-3 plain-English sentences (no markdown) explaining what the model disagreement means in practice \
+for a sailor -- what the models are actually split on, what that spread implies about forecast \
+confidence, and the practical consequence (e.g. "could be a light day or a rough one").
+
+Use only what is in the data. Be specific about the numbers. Do not use markdown. Do not invent \
+anything. Respond ONLY with valid JSON: a single object mapping "spot|||date" keys to the note string.
+Example key format: "Lemnos|||2026-10-03"
+
+Data:
+{table}"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            default_headers={"anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID},
+        )
+        response = client.messages.create(
+            model=SAILING_SUMMARY_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = next((b.text for b in response.content if b.type == "text"), "")
+        # strip any accidental markdown code fences before parsing
+        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(raw)
+    except Exception as e:
+        print(f"Disagreement notes skipped: {e}", file=sys.stderr)
+        return {}
+
+
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
                              sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
                              tiers, sailing_summary):
@@ -1153,21 +1221,43 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         ("temp_lo", "Temp (low)", "°C", 0),
         ("temp_hi", "Temp (high)", "°C", 0),
     ]
+    disagree_notes = generate_disagreement_notes(wind_records) if wind_records else {}
+
     for key, label, unit, decimals in wind_specs:
         if wind_records:
             block = build_param_block(wind_records, dates, key, label, unit, decimals, wind_source_label,
                                       "No data for these trip dates yet -- rerun closer to the trip")
             if key == "wind_mean" and block.get("available"):
-                flags_series, span_series = {}, {}
+                flags_s, wind_span_s, gust_span_s, dir_spread_s, per_model_s = {}, {}, {}, {}, {}
                 for spot in list(SPOTS.keys()):
-                    flags_series[spot] = []
-                    span_series[spot] = []
+                    flags_s[spot] = []
+                    wind_span_s[spot] = []
+                    gust_span_s[spot] = []
+                    dir_spread_s[spot] = []
+                    per_model_s[spot] = []
                     for d in dates:
-                        match = next((r for r in wind_records if r["spot"] == spot and r["date"] == d), None)
-                        flags_series[spot].append(match.get("flag") or "" if match else "")
-                        span_series[spot].append(list(match["wind_span"]) if match and match.get("wind_span") else None)
-                block["flags"] = flags_series
-                block["windSpan"] = span_series
+                        m = next((r for r in wind_records if r["spot"] == spot and r["date"] == d), None)
+                        flags_s[spot].append(m.get("flag") or "" if m else "")
+                        wind_span_s[spot].append(list(m["wind_span"]) if m and m.get("wind_span") else None)
+                        gust_span_s[spot].append(list(m["gust_span"]) if m and m.get("gust_span") else None)
+                        dir_spread_s[spot].append(m.get("dir_spread") if m else None)
+                        if m and m.get("flag") and m.get("per_model"):
+                            pm = m["per_model"]
+                            per_model_s[spot].append({
+                                MEDIUM_MODEL_LABELS.get(code, code): {
+                                    "wind": round(v["wind_mean"]) if v.get("wind_mean") is not None else None,
+                                    "dir": deg_to_compass(v["dir"]) if v.get("dir") is not None else None,
+                                    "gust": round(v["gust"]) if v.get("gust") is not None else None,
+                                } for code, v in pm.items()
+                            })
+                        else:
+                            per_model_s[spot].append(None)
+                block["flags"] = flags_s
+                block["windSpan"] = wind_span_s
+                block["gustSpan"] = gust_span_s
+                block["dirSpread"] = dir_spread_s
+                block["perModel"] = per_model_s
+                block["disagreeNotes"] = disagree_notes
             params[key] = block
         else:
             params[key] = placeholder_block(label, unit, wind_opens_note)

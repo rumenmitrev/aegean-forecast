@@ -214,6 +214,69 @@
   .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
   .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
 
+  /* Model-disagreement popup */
+  .disagree-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .disagree-popup {
+    background: var(--surface-card); border: 1px solid var(--border);
+    border-left: 3px solid #e67e22;
+    border-radius: 10px; padding: 16px 18px;
+    max-width: 420px; width: 100%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    position: relative;
+  }
+  .disagree-popup .dp-close {
+    position: absolute; top: 10px; right: 12px;
+    background: none; border: none; cursor: pointer;
+    font-size: 18px; color: var(--ink-muted); line-height: 1;
+  }
+  .disagree-popup .dp-close:hover { color: var(--ink-primary); }
+  .disagree-popup h3 {
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 16px; font-weight: 700; margin: 0 24px 10px 0;
+    color: var(--ink-primary);
+  }
+  .disagree-popup .dp-badge {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    background: rgba(230,126,34,0.15); color: #c0631a;
+    border: 1px solid rgba(230,126,34,0.35);
+    border-radius: 4px; padding: 1px 6px; margin-bottom: 10px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .disagree-popup table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .disagree-popup th {
+    text-align: left; color: var(--ink-muted); font-weight: 500;
+    padding: 3px 6px 3px 0; border-bottom: 1px solid var(--border);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .disagree-popup td {
+    padding: 4px 6px 4px 0; color: var(--ink-primary);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .disagree-popup td:first-child { font-family: inherit; color: var(--ink-secondary); font-size: 12.5px; }
+  .disagree-popup .dp-spread {
+    font-size: 12px; color: var(--ink-secondary);
+    margin: 10px 0 0; line-height: 1.5;
+  }
+  .disagree-popup .dp-note {
+    font-size: 13px; color: var(--ink-primary);
+    margin: 10px 0 0; line-height: 1.55;
+    padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  .disagree-popup .dp-note-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ink-muted); font-weight: 600; margin-bottom: 4px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .disagree-popup .dp-badge { color: #e8a162; background: rgba(230,126,34,0.12); }
+  }
+  :root[data-theme="dark"] .disagree-popup .dp-badge { color: #e8a162; background: rgba(230,126,34,0.12); }
+
   .placeholder-body {
     display: flex; align-items: center; gap: 10px;
     padding: 14px 4px; color: var(--ink-muted); font-size: 13.5px;
@@ -556,6 +619,99 @@ __COASTLINE_DATA_JSON__
     });
   }
 
+  function showDisagreementPopup(param, spot, dateIdx, date) {
+    const flag = (param.flags[spot][dateIdx] || "").split("+").filter(Boolean);
+    const windSpan = param.windSpan && param.windSpan[spot] && param.windSpan[spot][dateIdx];
+    const gustSpan = param.gustSpan && param.gustSpan[spot] && param.gustSpan[spot][dateIdx];
+    const dirSpread = param.dirSpread && param.dirSpread[spot] && param.dirSpread[spot][dateIdx];
+    const perModel = param.perModel && param.perModel[spot] && param.perModel[spot][dateIdx];
+    const noteKey = spot + "|||" + date;
+    const note = param.disagreeNotes && param.disagreeNotes[noteKey];
+    const spotLabel = LABELS[spot] || spot;
+
+    const overlay = document.createElement("div");
+    overlay.className = "disagree-overlay";
+    overlay.addEventListener("click", () => overlay.remove());
+
+    const popup = document.createElement("div");
+    popup.className = "disagree-popup";
+    popup.addEventListener("click", e => e.stopPropagation());
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "dp-close";
+    closeBtn.textContent = "×";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.addEventListener("click", () => overlay.remove());
+    popup.appendChild(closeBtn);
+
+    const h3 = document.createElement("h3");
+    h3.textContent = `${spotLabel} · ${dateLabel(date, false)}`;
+    popup.appendChild(h3);
+
+    const badge = document.createElement("div");
+    badge.className = "dp-badge";
+    badge.textContent = "⚠ Model disagreement: " + flag.join(" + ");
+    popup.appendChild(badge);
+
+    if (perModel) {
+      const tbl = document.createElement("table");
+      const thead = document.createElement("thead");
+      const hrow = document.createElement("tr");
+      ["Model", "Wind (kt)", "Dir", "Gust (kt)"].forEach(h => {
+        const th = document.createElement("th"); th.textContent = h; hrow.appendChild(th);
+      });
+      thead.appendChild(hrow); tbl.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      Object.entries(perModel).forEach(([model, vals]) => {
+        const row = document.createElement("tr");
+        [model, vals.wind ?? "–", vals.dir ?? "–", vals.gust ?? "–"].forEach(v => {
+          const td = document.createElement("td"); td.textContent = v; row.appendChild(td);
+        });
+        tbody.appendChild(row);
+      });
+      tbl.appendChild(tbody);
+      popup.appendChild(tbl);
+    }
+
+    const spreadLines = [];
+    if (windSpan) {
+      const spread = Math.round(windSpan[1] - windSpan[0]);
+      spreadLines.push(`Wind spread: ${Math.round(windSpan[0])}–${Math.round(windSpan[1])} kt (${spread} kt spread, threshold ${DATA.spreadWindKt} kt)`);
+    }
+    if (flag.includes("dir") && dirSpread != null) {
+      spreadLines.push(`Direction spread: ${dirSpread}° between models (threshold ${DATA.spreadDirDeg}°)`);
+    }
+    if (gustSpan) {
+      const gs = Math.round(gustSpan[1] - gustSpan[0]);
+      spreadLines.push(`Gust spread: ${Math.round(gustSpan[0])}–${Math.round(gustSpan[1])} kt (${gs} kt)`);
+    }
+    if (spreadLines.length) {
+      const sp = document.createElement("div");
+      sp.className = "dp-spread";
+      sp.innerHTML = spreadLines.map(l => `<div>${l}</div>`).join("");
+      popup.appendChild(sp);
+    }
+
+    if (note) {
+      const noteDiv = document.createElement("div");
+      noteDiv.className = "dp-note";
+      const lbl = document.createElement("div");
+      lbl.className = "dp-note-label";
+      lbl.textContent = "What this means";
+      const txt = document.createElement("div");
+      txt.textContent = note;
+      noteDiv.appendChild(lbl);
+      noteDiv.appendChild(txt);
+      popup.appendChild(noteDiv);
+    }
+
+    overlay.appendChild(popup);
+    document.body.appendChild(overlay);
+
+    const onKey = e => { if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", onKey); } };
+    document.addEventListener("keydown", onKey);
+  }
+
   function buildTable(param) {
     const table = document.createElement("table");
     table.className = "data-table";
@@ -582,20 +738,25 @@ __COASTLINE_DATA_JSON__
       PLACES.forEach(p => {
         const td = document.createElement("td");
         const flag = param.flags && param.flags[p] && param.flags[p][i];
-        const span = param.windSpan && param.windSpan[p] && param.windSpan[p][i];
-        if (flag && flag.includes("wind") && span) {
-          td.textContent = `${fmt(span[0], 0)}–${fmt(span[1], 0)}`;
-          td.title = "Models disagree on wind speed";
+        const windSpan = param.windSpan && param.windSpan[p] && param.windSpan[p][i];
+        if (flag && flag.includes("wind") && windSpan) {
+          td.textContent = `${fmt(windSpan[0], 0)}–${fmt(windSpan[1], 0)}`;
         } else {
           td.textContent = fmt(param.series[p][i], param.decimals);
         }
         if (flag) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";
-          warn.title = "Model disagreement: " + flag.split("+").join(", ");
-          warn.style.cssText = "color:var(--warn,#e67e22);font-size:.85em;cursor:default";
+          warn.style.cssText = "color:#e67e22;font-size:.85em;cursor:pointer";
+          warn.setAttribute("aria-label", "Show model disagreement details");
+          warn.addEventListener("click", e => {
+            e.stopPropagation();
+            showDisagreementPopup(param, p, i, date);
+          });
           td.appendChild(warn);
           td.style.fontWeight = "600";
+          td.style.cursor = "pointer";
+          td.addEventListener("click", () => showDisagreementPopup(param, p, i, date));
         }
         tr.appendChild(td);
       });
