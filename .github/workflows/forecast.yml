@@ -1,13 +1,6 @@
 name: Aegean forecast
 
 on:
-  schedule:
-    # 07:00 UTC = 10:00 Europe/Athens *while EEST (UTC+3) holds*. GitHub
-    # Actions cron is fixed UTC with no DST awareness, so this drifts an
-    # hour once EEST ends (last Sunday of October) -- past this trip's
-    # window (3-10 Oct), so harmless for this trip, but re-check the offset
-    # if this keeps running past the DST changeover.
-    - cron: "0 7 * * *"
   workflow_dispatch: {}
 
 permissions:
