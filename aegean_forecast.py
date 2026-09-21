@@ -570,6 +570,61 @@ def medium_range(lat, lon):
     })
 
 
+def fetch_500hpa(dates):
+    """Daily-mean 500 hPa geopotential height (m), temperature (°C), wind
+    speed (kt) and direction (°) for the central Aegean, from GFS (best
+    pressure-level horizon among the configured models via Open-Meteo).
+    Returns a dict {date_str: {z500, t500, ws500, wd500}} for trip dates
+    that have data; empty dict on any failure."""
+    coords = list(SPOTS.values())
+    clat = round(sum(c[0] for c in coords) / len(coords), 2)
+    clon = round(sum(c[1] for c in coords) / len(coords), 2)
+    try:
+        r = fetch("https://api.open-meteo.com/v1/forecast", {
+            "latitude": clat, "longitude": clon,
+            "hourly": "geopotential_height_500hPa,temperature_500hPa,windspeed_500hPa,winddirection_500hPa",
+            "models": "gfs_seamless",
+            "wind_speed_unit": "kn",
+            "forecast_days": MEDIUM_RANGE_DAYS,
+            "timezone": TRIP_TZ.key,
+            "cell_selection": CELL_SELECTION,
+        })
+    except Exception as e:
+        print(f"500 hPa fetch skipped: {e}", file=sys.stderr)
+        return {}
+
+    h = r.get("hourly", {})
+    times = h.get("time", [])
+    z_vals = h.get("geopotential_height_500hPa", [])
+    t_vals = h.get("temperature_500hPa", [])
+    ws_vals = h.get("windspeed_500hPa", [])
+    wd_vals = h.get("winddirection_500hPa", [])
+
+    date_set = {d.isoformat() if hasattr(d, "isoformat") else d for d in dates}
+    day_buckets = {d: {"z": [], "t": [], "ws": [], "wd": []} for d in date_set}
+    for i, ts in enumerate(times):
+        day = ts[:10]
+        if day not in day_buckets:
+            continue
+        b = day_buckets[day]
+        if i < len(z_vals) and z_vals[i] is not None:  b["z"].append(z_vals[i])
+        if i < len(t_vals) and t_vals[i] is not None:  b["t"].append(t_vals[i])
+        if i < len(ws_vals) and ws_vals[i] is not None: b["ws"].append(ws_vals[i])
+        if i < len(wd_vals) and wd_vals[i] is not None: b["wd"].append(wd_vals[i])
+
+    out = {}
+    for day, b in day_buckets.items():
+        if not b["z"]:
+            continue
+        out[day] = {
+            "z500": round(sum(b["z"]) / len(b["z"])),
+            "t500": round(sum(b["t"]) / len(b["t"]), 1) if b["t"] else None,
+            "ws500": round(sum(b["ws"]) / len(b["ws"])) if b["ws"] else None,
+            "wd500": deg_to_compass(circular_mean_deg(b["wd"])) if b["wd"] else None,
+        }
+    return out
+
+
 def sea_state(lat, lon):
     """One HTTP call for all 9 points of the 3x3 kernel around (lat, lon) --
     same batching as medium_range(). Marine has no per-model consensus step
@@ -986,12 +1041,11 @@ def placeholder_block(label, unit, opens_note):
 
 # ------------------------------------------------------- LLM sailing summary --
 
-def summary_data_table(wind_records, sea_records):
+def summary_data_table(wind_records, sea_records, upper=None):
     """Plain-text tables the model reads as its only source of truth: the
     full wind/temp/rain table (with the model-disagreement flag column),
-    a per-model breakdown on any day models disagreed, and sea state when
-    available. Opus 5 is capable enough to read this directly -- no need
-    to pre-compress it the way the abandoned small local model needed."""
+    a per-model breakdown on any day models disagreed, sea state when
+    available, and 500 hPa upper-atmosphere context when provided."""
     lines = ["place,date,wind_mean_kt,gust_kt,dir,rain_mm,temp_lo_c,temp_hi_c,model_flag"]
     for r in wind_records:
         lines.append(f"{r['spot']},{r['date']},{r.get('wind_mean')},{r.get('gust')},"
@@ -1011,10 +1065,19 @@ def summary_data_table(wind_records, sea_records):
         lines.append("place,date,wave_height_m,wave_period_s,wave_dir")
         for r in sea_records:
             lines.append(f"{r['spot']},{r['date']},{r.get('wave')},{r.get('period')},{r.get('dir')}")
+
+    if upper:
+        lines.append("")
+        lines.append("500 hPa upper atmosphere, central Aegean (GFS daily mean):")
+        lines.append("date,z500_m,t500_c,wind500_kt,flow500_dir")
+        for day in sorted(upper):
+            u = upper[day]
+            lines.append(f"{day},{u['z500']},{u['t500']},{u['ws500']},{u['wd500']}")
+
     return "\n".join(lines)
 
 
-def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv):
+def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper=None):
     """Ask Claude (SAILING_SUMMARY_MODEL) to turn this run's data into a
     sailing-focused narrative. Returns None (never raises) if the API key
     isn't set up or the call fails, so the rest of the pipeline is
@@ -1090,6 +1153,15 @@ far out, not a day-by-day forecast -- the ensemble mean smooths out individual f
                               "in the patch, not just the exact point), period/direction are the kernel "
                               "mean. There's no further models-consensus step on top since Marine is a "
                               "single model, unlike the wind figures' three-model combine.")
+    if upper:
+        data_methodology += ("\n\n500 hPa upper-atmosphere context (GFS daily mean for central Aegean) is "
+                              "appended to the data table. z500_m is geopotential height: values above "
+                              "~5850m indicate a ridge (blocking high, stable surface weather), below "
+                              "~5700m indicate a trough or cutoff low (disturbed, changeable). t500_c is "
+                              "500 hPa temperature: colder than -15°C suggests atmospheric instability "
+                              "(convection risk), warmer than -10°C a stable warm cap. wind500_kt and "
+                              "flow500_dir show the steering-level jet direction. Use this to explain the "
+                              "large-scale pattern behind surface wind forecasts and model disagreements.")
 
     topics = [
         "The overall wind regime for the week -- direction, typical strength, how steady vs. variable.",
@@ -1112,7 +1184,7 @@ the wind/temp/rain figures below: {wind_source_label}.
 {data_methodology}
 {local_knowledge_section}
 DATA:
-{summary_data_table(wind_records, sea_records)}
+{summary_data_table(wind_records, sea_records, upper)}
 {previous_section}
 
 Write a thorough (500-700 word) sailing briefing in flowing prose, organized as a few clearly \
@@ -1150,7 +1222,7 @@ present in it."""
     return text.strip() or None
 
 
-def generate_disagreement_notes(wind_records):
+def generate_disagreement_notes(wind_records, upper=None):
     """Call Claude once with all flagged spot/date pairs and return a dict
     keyed by 'spot|||date' with a 1-3 sentence explanation of what the model
     disagreement means in practice. Returns {} if no flagged records, no API
@@ -1182,17 +1254,30 @@ def generate_disagreement_notes(wind_records):
         lines.append(f"{r['spot']},{r['date']},{r['flag']},{wind_spread},{dir_spread},{gust_spread},{w_vals},{d_vals},{g_vals}")
     table = "\n".join(lines)
 
+    upper_section = ""
+    if upper:
+        upper_lines = ["date,z500_m,t500_c,wind500_kt,flow500_dir"]
+        for day in sorted(upper):
+            u = upper[day]
+            upper_lines.append(f"{day},{u['z500']},{u['t500']},{u['ws500']},{u['wd500']}")
+        upper_section = (
+            "\n\n500 hPa upper atmosphere context (GFS, central Aegean daily mean -- "
+            "z500>5850m=ridge/stable, <5700m=trough/disturbed; t500<-15°C=instability risk):\n"
+            + "\n".join(upper_lines)
+        )
+
     prompt = f"""You are a sailing weather analyst. For each row in the table below, write exactly \
 1-3 plain-English sentences (no markdown) explaining what the model disagreement means in practice \
-for a sailor -- what the models are actually split on, what that spread implies about forecast \
-confidence, and the practical consequence (e.g. "could be a light day or a rough one").
+for a sailor -- what the models are actually split on, what the upper-atmosphere context suggests \
+about which scenario is more likely, and the practical consequence (e.g. "could be a light day or \
+a rough one"). When the 500 hPa data is available for that date, use it to add synoptic context.
 
 Use only what is in the data. Be specific about the numbers. Do not use markdown. Do not invent \
 anything. Respond ONLY with valid JSON: a single object mapping "spot|||date" keys to the note string.
 Example key format: "Lemnos|||2026-10-03"
 
 Data:
-{table}"""
+{table}{upper_section}"""
 
     try:
         import anthropic
@@ -1272,7 +1357,7 @@ def generate_chart_summaries(charts_meta):
 
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
                              sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
-                             tiers, sailing_summary):
+                             tiers, sailing_summary, upper=None):
     dates = all_dates()
     params = {}
 
@@ -1283,7 +1368,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         ("temp_lo", "Temp (low)", "°C", 0),
         ("temp_hi", "Temp (high)", "°C", 0),
     ]
-    disagree_notes = generate_disagreement_notes(wind_records) if wind_records else {}
+    disagree_notes = generate_disagreement_notes(wind_records, upper) if wind_records else {}
 
     for key, label, unit, decimals in wind_specs:
         if wind_records:
@@ -1691,7 +1776,17 @@ def main():
                        "note": "HCMR wind + wave" if poseidon_records else f"opens ~{medium_available} (short horizon)"})
 
     print()
-    sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv)
+    upper = None
+    if wind_records:
+        print("Fetching 500 hPa upper-atmosphere data (GFS)...")
+        upper = fetch_500hpa(all_dates())
+        if upper:
+            print(f"  Got 500 hPa data for {len(upper)} days: z500 range "
+                  f"{min(v['z500'] for v in upper.values())}–{max(v['z500'] for v in upper.values())} m")
+        else:
+            print("  (no 500 hPa data for trip dates yet)")
+
+    sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper)
     if sailing_summary:
         print(f"##### Sailing summary ({SAILING_SUMMARY_MODEL}, read the numbers above too) #####")
         print(sailing_summary)
@@ -1705,7 +1800,7 @@ def main():
         poseidon_records=poseidon_records,
         poseidon_opens_note=f"HCMR Poseidon (unofficial) opens ~{medium_available} — actual horizon is much "
                              "shorter, rerun closer to the trip",
-        tiers=tiers, sailing_summary=sailing_summary,
+        tiers=tiers, sailing_summary=sailing_summary, upper=upper,
     )
     write_dashboard(payload)
     print(f"\nDashboard written to {DASHBOARD_OUT}")
