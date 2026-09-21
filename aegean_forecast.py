@@ -1287,13 +1287,22 @@ Data:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in response.content if b.type == "text"), "")
-        # strip any accidental markdown code fences before parsing
         raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Response may be truncated mid-JSON -- extract all complete key:value
+            # pairs we can find and return whatever is salvageable.
+            result = {}
+            for m in re.finditer(r'"([^"]+\|\|\|[^"]+)"\s*:\s*"((?:[^"\\]|\\.)*)"', raw):
+                result[m.group(1)] = m.group(2)
+            if result:
+                print(f"  Disagreement notes: partial parse recovered {len(result)} entries", file=sys.stderr)
+            return result
     except Exception as e:
         print(f"Disagreement notes skipped: {e}", file=sys.stderr)
         return {}
