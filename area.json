@@ -104,7 +104,7 @@
   // real one -- an empty/missing value just skips that paragraph, rather
   // than feeding the model this area's effects for a place they don't
   // exist in.
-  "local_knowledge": "Local knowledge about these specific spots, for context if relevant -- don't force it in if a day's data doesn't support it: Lemnos and Agios Efstratios sit in the open channel south of the main islands and tend to run windier than the sheltered coastal spots; the Gulf of Saros can locally accelerate a northeasterly into a stronger funneled flow than the open-water reading suggests; Mount Athos's steep terrain can produce local gap/katabatic gusts stronger than the gridded forecast captures; Thracian Sea (open water) and Keramoti/Thassos are the most sheltered, coastal readings.",
+  "local_knowledge": "",
 
   // ---- Spots ------------------------------------------------------------------
   // The places this pipeline tracks, each with lat/lon plus explicit
