@@ -1098,8 +1098,11 @@ __COASTLINE_DATA_JSON__
       tr.appendChild(tdDate);
       PLACES.forEach(p => {
         const td = document.createElement("td");
-        td.textContent = param.series[p][i] || "–";
         const flag = param.flags && param.flags[p] && param.flags[p][i];
+        const dirPM = param.dirPerModel && param.dirPerModel[p] && param.dirPerModel[p][i];
+        // On a direction-flagged day show per-model directions instead of the
+        // circular mean, which would misrepresent models pointing opposite ways.
+        td.textContent = (flag && flag.includes("dir") && dirPM) ? dirPM : (param.series[p][i] || "–");
         if (flag && flag.includes("dir")) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";

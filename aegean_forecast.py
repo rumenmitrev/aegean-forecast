@@ -1431,6 +1431,24 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
             dir_block["gustSpan"] = wm.get("gustSpan", {})
             dir_block["windSpan"] = wm.get("windSpan", {})
             dir_block["disagreeNotes"] = wm.get("disagreeNotes", {})
+            # Per-model direction strings for flagged cells, so the table can
+            # show "NE / NW" instead of a misleading circular mean.
+            dir_pm = {}
+            for spot in list(SPOTS.keys()):
+                dir_pm[spot] = []
+                for d in dates:
+                    m = next((r for r in wind_records if r["spot"] == spot and r["date"] == d), None)
+                    flag = m.get("flag") or "" if m else ""
+                    if "dir" in flag.split("+") and m and m.get("per_model"):
+                        dirs_list = [
+                            deg_to_compass(v["dir"])
+                            for v in m["per_model"].values()
+                            if v.get("dir") is not None
+                        ]
+                        dir_pm[spot].append(" / ".join(dict.fromkeys(dirs_list)) if dirs_list else None)
+                    else:
+                        dir_pm[spot].append(None)
+            dir_block["dirPerModel"] = dir_pm
         params["wind_dir"] = dir_block
     else:
         params["wind_dir"] = placeholder_block("Wind direction", "", wind_opens_note)
