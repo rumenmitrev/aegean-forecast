@@ -214,6 +214,44 @@
   .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
   .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
 
+  /* Synoptic charts card */
+  .chart-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chart-tabs button {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 10px; font-size: 12px; cursor: pointer; color: var(--ink-secondary);
+    font-family: "Barlow Condensed", sans-serif; font-weight: 600; letter-spacing: .03em;
+    transition: background 80ms, color 80ms;
+  }
+  .chart-tabs button[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .chart-type-toggle { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chart-type-toggle button {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 10px; font-size: 11.5px; cursor: pointer; color: var(--ink-secondary);
+    transition: background 80ms, color 80ms;
+  }
+  .chart-type-toggle button[aria-pressed="true"] {
+    background: var(--accent-wash); border-color: var(--accent); color: var(--accent);
+    font-weight: 600;
+  }
+  .chart-img-wrap { border-radius: 6px; overflow: hidden; background: #000; }
+  .chart-img-wrap img { width: 100%; display: block; }
+  .chart-summary {
+    font-size: 13px; color: var(--ink-secondary); line-height: 1.55;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  .chart-summary-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ink-muted); font-weight: 600; margin-bottom: 4px;
+  }
+  .chart-pending {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 4px; color: var(--ink-muted); font-size: 13.5px;
+    border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .chart-pending .dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink-muted); flex-shrink: 0; }
+
   /* Model-disagreement popup */
   .disagree-overlay {
     position: fixed; inset: 0; z-index: 100;
@@ -1128,6 +1166,121 @@ __COASTLINE_DATA_JSON__
     return card;
   }
 
+  function buildChartsCard() {
+    const charts = DATA.charts || [];
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = "Synoptic charts";
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = "ECMWF · charts.ecmwf.int";
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    if (!charts.length) {
+      const pend = document.createElement("div");
+      pend.className = "chart-pending";
+      const dot = document.createElement("span"); dot.className = "dot";
+      const txt = document.createElement("span");
+      txt.textContent = "Opens ~9-10 days out — rerun the forecast script closer to the trip";
+      pend.appendChild(dot); pend.appendChild(txt);
+      card.appendChild(pend);
+      return card;
+    }
+
+    // Unique dates and products, preserving order
+    const dates = [...new Set(charts.map(c => c.date))];
+    const products = [...new Map(charts.map(c => [c.product, c.label])).entries()];
+
+    let activeDate = dates[0];
+    let activeProd = products[0][0];
+
+    // Date tabs
+    const dateTabs = document.createElement("div");
+    dateTabs.className = "chart-tabs";
+    const dateButtons = {};
+    dates.forEach(d => {
+      const btn = document.createElement("button");
+      btn.textContent = dateLabel(d, d === dates[0]);
+      btn.setAttribute("aria-pressed", d === activeDate ? "true" : "false");
+      btn.addEventListener("click", () => {
+        activeDate = d;
+        Object.entries(dateButtons).forEach(([k, b]) => b.setAttribute("aria-pressed", k === d ? "true" : "false"));
+        refresh();
+      });
+      dateButtons[d] = btn;
+      dateTabs.appendChild(btn);
+    });
+    card.appendChild(dateTabs);
+
+    // Product type toggle (only when more than one product)
+    const prodButtons = {};
+    if (products.length > 1) {
+      const toggle = document.createElement("div");
+      toggle.className = "chart-type-toggle";
+      products.forEach(([id, label]) => {
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        btn.setAttribute("aria-pressed", id === activeProd ? "true" : "false");
+        btn.addEventListener("click", () => {
+          activeProd = id;
+          Object.entries(prodButtons).forEach(([k, b]) => b.setAttribute("aria-pressed", k === id ? "true" : "false"));
+          refresh();
+        });
+        prodButtons[id] = btn;
+        toggle.appendChild(btn);
+      });
+      card.appendChild(toggle);
+    }
+
+    // Image
+    const imgWrap = document.createElement("div");
+    imgWrap.className = "chart-img-wrap";
+    const img = document.createElement("img");
+    img.alt = "";
+    imgWrap.appendChild(img);
+    card.appendChild(imgWrap);
+
+    // AI summary
+    const summaryDiv = document.createElement("div");
+    summaryDiv.className = "chart-summary";
+    const summaryLabel = document.createElement("div");
+    summaryLabel.className = "chart-summary-label";
+    summaryLabel.textContent = "AI synoptic interpretation";
+    const summaryText = document.createElement("div");
+    summaryDiv.appendChild(summaryLabel);
+    summaryDiv.appendChild(summaryText);
+    card.appendChild(summaryDiv);
+
+    function refresh() {
+      const entry = charts.find(c => c.date === activeDate && c.product === activeProd);
+      if (entry) {
+        img.src = entry.src;
+        img.alt = `${entry.label} · ${activeDate}`;
+        if (entry.summary) {
+          summaryText.textContent = entry.summary;
+          summaryDiv.hidden = false;
+        } else {
+          summaryDiv.hidden = true;
+        }
+      } else {
+        img.src = "";
+        img.alt = "Chart not available for this date";
+        summaryDiv.hidden = true;
+      }
+    }
+    refresh();
+    return card;
+  }
+
   buildHeader();
   buildFooter();
   buildSummary();
@@ -1146,6 +1299,8 @@ __COASTLINE_DATA_JSON__
       cardsEl.appendChild(buildCard(key, param));
     }
   });
+
+  cardsEl.appendChild(buildChartsCard());
 
   document.getElementById("run-stamp").textContent = fmtStamp(DATA.runStamp);
 })();

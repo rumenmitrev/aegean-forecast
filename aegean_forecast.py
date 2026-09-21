@@ -169,7 +169,11 @@ LOCAL_KNOWLEDGE = _area.get("local_knowledge", "")
 EXTENDED_RANGE_DAYS = 46
 MEDIUM_RANGE_DAYS = 15
 
-CHART_PRODUCT = "medium-mslp-wind850"
+CHART_PRODUCTS = [
+    ("medium-mslp-wind850",  "MSLP + 850 hPa wind"),
+    ("medium-z500-t850",     "500 hPa geopotential + 850 hPa temperature"),
+]
+CHART_PRODUCT = CHART_PRODUCTS[0][0]  # kept for the tier label / legacy paths
 CHARTS_DIR = pathlib.Path(__file__).resolve().parent / "charts"
 RUNS_CSV = pathlib.Path(__file__).resolve().parent / "runs.csv"
 # Real OSM coastline for the map card -- built once per area by
@@ -610,10 +614,12 @@ def chart_link(data):
     return (link, desc) if link and desc else None
 
 
-def chart_for_date(date):
+def chart_for_date(date, product=None):
     """(image_url, description) for the ECMWF synoptic chart valid on `date`,
     or (None, reason) once `date` is beyond the current forecast horizon."""
-    data = opencharts_product(CHART_PRODUCT, f"{date.isoformat()}T00:00:00Z")
+    if product is None:
+        product = CHART_PRODUCT
+    data = opencharts_product(product, f"{date.isoformat()}T00:00:00Z")
     result = chart_link(data) if "error" not in data else None
     if result:
         return result
@@ -623,7 +629,7 @@ def chart_for_date(date):
     timestamps = re.findall(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", str(data.get("error", "")))
     same_day = [t for t in timestamps if t.startswith(date.isoformat())]
     if same_day:
-        data = opencharts_product(CHART_PRODUCT, same_day[-1])
+        data = opencharts_product(product, same_day[-1])
         result = chart_link(data) if "error" not in data else None
         if result:
             return result
@@ -1208,6 +1214,62 @@ Data:
         return {}
 
 
+def generate_chart_summaries(charts_meta):
+    """Send each chart PNG to Claude vision and ask for a plain-English synoptic
+    summary. Returns a dict mapping 'date_product' -> summary text.
+    Skips gracefully on missing API key or any call failure."""
+    if not charts_meta:
+        return {}
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key and ANTHROPIC_API_KEY_FILE.exists():
+        api_key = ANTHROPIC_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    if not api_key:
+        return {}
+
+    import base64
+    summaries = {}
+    try:
+        import anthropic
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            default_headers={"anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID},
+        )
+    except ImportError:
+        print("Chart summaries skipped: pip install anthropic", file=sys.stderr)
+        return {}
+
+    for c in charts_meta:
+        key = f"{c['date']}_{c['product']}"
+        src = CHARTS_DIR / pathlib.Path(c["src"]).name
+        if not src.exists():
+            continue
+        try:
+            img_b64 = base64.standard_b64encode(src.read_bytes()).decode()
+            prompt = (
+                f"This is an ECMWF official weather chart: {c['label']}, valid {c['date']}, "
+                f"area South-East Europe / Aegean Sea. "
+                "In 2-4 plain sentences (no markdown, no bullet points), describe what the synoptic "
+                "pattern shows and what it means practically for sailors in the Aegean and Thracian Sea: "
+                "where the highs/lows/fronts are, the implied wind gradient and direction, and whether "
+                "conditions look settled, transitional, or disturbed for that day."
+            )
+            response = client.messages.create(
+                model=SAILING_SUMMARY_MODEL,
+                max_tokens=512,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            )
+            text = next((b.text for b in response.content if b.type == "text"), "").strip()
+            if text:
+                summaries[key] = text
+                print(f"  Chart summary {c['date']} {c['product']}: {text[:80]}...")
+        except Exception as e:
+            print(f"  Chart summary {c['date']} {c['product']} skipped: {e}", file=sys.stderr)
+    return summaries
+
+
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
                              sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
                              tiers, sailing_summary):
@@ -1325,6 +1387,35 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
             params["poseidon_wind_dir"] = placeholder_block("Wind direction", "", poseidon_opens_note)
             params["poseidon_wave_dir"] = placeholder_block("Wave direction", "", poseidon_opens_note)
 
+    # Synoptic charts -- scan what's been downloaded and include metadata so
+    # the dashboard can render them.  Actual image files are NOT embedded here;
+    # write_dashboard copies them to site/charts/ and the page references them
+    # by relative path.  Only trip-date files that actually exist are included.
+    trip_dates_set = set(dates)
+    charts_meta = []
+    prod_label_map = dict(CHART_PRODUCTS)
+    if CHARTS_DIR.exists():
+        for prod_id, prod_label in CHART_PRODUCTS:
+            for date_str in sorted(trip_dates_set):
+                f = CHARTS_DIR / f"{date_str}_{prod_id}.png"
+                if f.exists():
+                    charts_meta.append({
+                        "date": date_str,
+                        "product": prod_id,
+                        "label": prod_label,
+                        "src": f"charts/{f.name}",
+                    })
+
+    # Ask Claude to interpret each chart image -- only for charts that don't
+    # already have a summary from a previous run (checked via the payload key).
+    if charts_meta:
+        print("Generating chart summaries...")
+        chart_summaries = generate_chart_summaries(charts_meta)
+        for c in charts_meta:
+            key = f"{c['date']}_{c['product']}"
+            if key in chart_summaries:
+                c["summary"] = chart_summaries[key]
+
     return {
         "dates": dates, "runStamp": run_stamp, "places": list(SPOTS.keys()),
         "tiers": tiers, "params": params, "sailingSummary": sailing_summary,
@@ -1336,10 +1427,12 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         "mediumModelsLabel": MEDIUM_MODELS_LABEL,
         "spreadWindKt": SPREAD_WIND_KT, "spreadDirDeg": SPREAD_DIR_DEG,
         "dirFlagMinWindKt": DIR_FLAG_MIN_WIND_KT,
+        "charts": charts_meta,
     }
 
 
 def write_dashboard(payload):
+    import shutil
     template = DASHBOARD_TEMPLATE.read_text(encoding="utf-8")
     coastline = COASTLINE_JSON.read_text(encoding="utf-8") if COASTLINE_JSON.exists() else "null"
     html = template.replace("__DASHBOARD_DATA_JSON__", json.dumps(payload, ensure_ascii=False))
@@ -1349,6 +1442,16 @@ def write_dashboard(payload):
     # repo root) keeps runs.csv / the script / the token file off the public site.
     SITE_DIR.mkdir(exist_ok=True)
     (SITE_DIR / "index.html").write_text(html, encoding="utf-8")
+    # Copy any chart images that this run's payload references into site/charts/
+    # so they are deployed alongside the HTML.
+    if payload.get("charts"):
+        site_charts = SITE_DIR / "charts"
+        site_charts.mkdir(exist_ok=True)
+        for c in payload["charts"]:
+            src = CHARTS_DIR / pathlib.Path(c["src"]).name
+            dst = SITE_DIR / c["src"]
+            if src.exists():
+                shutil.copy2(src, dst)
 
 
 def deploy_dashboard():
@@ -1489,39 +1592,42 @@ def main():
     chart_tier_live = False
     print()
     if days_out > MEDIUM_RANGE_DAYS:
-        print("ECMWF official synoptic charts (MSLP + 850 hPa wind) open up around 9-10 days out.")
+        print("ECMWF official synoptic charts open up around 9-10 days out.")
     else:
-        print(f"##### ECMWF official synoptic chart: {CHART_PRODUCT} (fronts / highs / lows / gradient wind) #####")
+        print(f"##### ECMWF official synoptic charts (fronts / highs / lows / gradient wind) #####")
         print(f"Source: charts.ecmwf.int, area '{CHART_PROJECTION.replace('opencharts_', '')}'. "
-              "Real ECMWF rendering, not a derived number -- read pressure contours for fronts/lows.")
+              "Real ECMWF rendering, not derived numbers -- read pressure contours for fronts/lows.")
         CHARTS_DIR.mkdir(exist_ok=True)
-        date, any_chart = TRIP_START, False
-        while date <= TRIP_END:
-            try:
-                url, desc = chart_for_date(date)
-            except Exception as e:
-                print(f"{date}: failed ({e})", file=sys.stderr)
-                date += dt.timedelta(days=1)
-                continue
-            if url:
-                any_chart = True
-                dest = CHARTS_DIR / f"{date.isoformat()}_{CHART_PRODUCT}.png"
-                already_today = (
-                    dest.exists()
-                    and dt.datetime.fromtimestamp(dest.stat().st_mtime, tz=TRIP_TZ).date() == today
-                )
-                if already_today:
-                    print(f"{date}: {desc}\n  -> already have today's chart at {dest}")
+        any_chart = False
+        for prod_id, prod_label in CHART_PRODUCTS:
+            print(f"  {prod_label}:")
+            date = TRIP_START
+            while date <= TRIP_END:
+                try:
+                    url, desc = chart_for_date(date, prod_id)
+                except Exception as e:
+                    print(f"    {date}: failed ({e})", file=sys.stderr)
                     date += dt.timedelta(days=1)
                     continue
-                try:
-                    save_chart(url, dest)
-                    print(f"{date}: {desc}\n  -> saved {dest}")
-                except Exception as e:
-                    print(f"{date}: failed to save chart ({e})", file=sys.stderr)
-            else:
-                print(f"{date}: {desc}")
-            date += dt.timedelta(days=1)
+                if url:
+                    any_chart = True
+                    dest = CHARTS_DIR / f"{date.isoformat()}_{prod_id}.png"
+                    already_today = (
+                        dest.exists()
+                        and dt.datetime.fromtimestamp(dest.stat().st_mtime, tz=TRIP_TZ).date() == today
+                    )
+                    if already_today:
+                        print(f"    {date}: already have today's chart at {dest.name}")
+                        date += dt.timedelta(days=1)
+                        continue
+                    try:
+                        save_chart(url, dest)
+                        print(f"    {date}: saved {dest.name}")
+                    except Exception as e:
+                        print(f"    {date}: failed to save chart ({e})", file=sys.stderr)
+                else:
+                    print(f"    {date}: {desc}")
+                date += dt.timedelta(days=1)
         if not any_chart:
             print("(None of the trip dates are inside the chart horizon yet -- rerun closer to the trip.)")
         chart_tier_live = any_chart
