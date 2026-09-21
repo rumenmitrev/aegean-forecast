@@ -1263,8 +1263,19 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
             params[key] = placeholder_block(label, unit, wind_opens_note)
 
     if wind_records:
-        params["wind_dir"] = build_direction_block(wind_records, dates, "dir", "Wind direction", wind_source_label,
-                                                    "No data for these trip dates yet -- rerun closer to the trip")
+        dir_block = build_direction_block(wind_records, dates, "dir", "Wind direction", wind_source_label,
+                                          "No data for these trip dates yet -- rerun closer to the trip")
+        if dir_block.get("available"):
+            # Re-use the flag data already computed for wind_mean so the
+            # direction table can also show the ⚠ and open the same popup.
+            wm = params.get("wind_mean", {})
+            dir_block["flags"] = wm.get("flags", {})
+            dir_block["dirSpread"] = wm.get("dirSpread", {})
+            dir_block["perModel"] = wm.get("perModel", {})
+            dir_block["gustSpan"] = wm.get("gustSpan", {})
+            dir_block["windSpan"] = wm.get("windSpan", {})
+            dir_block["disagreeNotes"] = wm.get("disagreeNotes", {})
+        params["wind_dir"] = dir_block
     else:
         params["wind_dir"] = placeholder_block("Wind direction", "", wind_opens_note)
 

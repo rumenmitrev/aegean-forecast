@@ -1058,6 +1058,21 @@ __COASTLINE_DATA_JSON__
       PLACES.forEach(p => {
         const td = document.createElement("td");
         td.textContent = param.series[p][i] || "–";
+        const flag = param.flags && param.flags[p] && param.flags[p][i];
+        if (flag && flag.includes("dir")) {
+          const warn = document.createElement("span");
+          warn.textContent = " ⚠";
+          warn.style.cssText = "color:#e67e22;font-size:.85em;cursor:pointer";
+          warn.setAttribute("aria-label", "Show direction disagreement details");
+          warn.addEventListener("click", e => {
+            e.stopPropagation();
+            showDisagreementPopup(param, p, i, date);
+          });
+          td.appendChild(warn);
+          td.style.fontWeight = "600";
+          td.style.cursor = "pointer";
+          td.addEventListener("click", () => showDisagreementPopup(param, p, i, date));
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
