@@ -1155,8 +1155,20 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
     ]
     for key, label, unit, decimals in wind_specs:
         if wind_records:
-            params[key] = build_param_block(wind_records, dates, key, label, unit, decimals, wind_source_label,
-                                             "No data for these trip dates yet -- rerun closer to the trip")
+            block = build_param_block(wind_records, dates, key, label, unit, decimals, wind_source_label,
+                                      "No data for these trip dates yet -- rerun closer to the trip")
+            if key == "wind_mean" and block.get("available"):
+                flags_series, span_series = {}, {}
+                for spot in list(SPOTS.keys()):
+                    flags_series[spot] = []
+                    span_series[spot] = []
+                    for d in dates:
+                        match = next((r for r in wind_records if r["spot"] == spot and r["date"] == d), None)
+                        flags_series[spot].append(match.get("flag") or "" if match else "")
+                        span_series[spot].append(list(match["wind_span"]) if match and match.get("wind_span") else None)
+                block["flags"] = flags_series
+                block["windSpan"] = span_series
+            params[key] = block
         else:
             params[key] = placeholder_block(label, unit, wind_opens_note)
 

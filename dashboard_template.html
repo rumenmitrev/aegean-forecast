@@ -581,7 +581,22 @@ __COASTLINE_DATA_JSON__
       tr.appendChild(tdDate);
       PLACES.forEach(p => {
         const td = document.createElement("td");
-        td.textContent = fmt(param.series[p][i], param.decimals);
+        const flag = param.flags && param.flags[p] && param.flags[p][i];
+        const span = param.windSpan && param.windSpan[p] && param.windSpan[p][i];
+        if (flag && flag.includes("wind") && span) {
+          td.textContent = `${fmt(span[0], 0)}–${fmt(span[1], 0)}`;
+          td.title = "Models disagree on wind speed";
+        } else {
+          td.textContent = fmt(param.series[p][i], param.decimals);
+        }
+        if (flag) {
+          const warn = document.createElement("span");
+          warn.textContent = " ⚠";
+          warn.title = "Model disagreement: " + flag.split("+").join(", ");
+          warn.style.cssText = "color:var(--warn,#e67e22);font-size:.85em;cursor:default";
+          td.appendChild(warn);
+          td.style.fontWeight = "600";
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
