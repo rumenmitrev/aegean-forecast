@@ -691,7 +691,8 @@ __COASTLINE_DATA_JSON__
 
     const badge = document.createElement("div");
     badge.className = "dp-badge";
-    badge.textContent = "⚠ Model disagreement: " + flag.join(" + ");
+    const flagLabels = {"wind": "wind speed", "dir": "direction"};
+    badge.textContent = "⚠ Model disagreement: " + flag.map(f => flagLabels[f] || f).join(" + ");
     popup.appendChild(badge);
 
     if (perModel) {

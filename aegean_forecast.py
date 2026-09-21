@@ -1781,7 +1781,14 @@ def main():
     # Medium-range consensus supersedes EC46 once it's live -- it's
     # independent models agreeing (or flagged when they don't), not a single
     # coarse ensemble mean, so prefer it for the dashboard's wind/temp/rain cards.
-    if medium_records:
+    # For trip dates beyond the medium-range horizon, fill in EC46 values so
+    # the cards don't show blank cells for the back half of the trip.
+    if medium_records and ec46_records:
+        medium_dates = {r["date"] for r in medium_records}
+        ec46_fill = [r for r in ec46_records if r["date"] not in medium_dates]
+        wind_records = medium_records + ec46_fill
+        wind_source_label = f"Medium-range consensus ({MEDIUM_MODELS_LABEL}); EC46 where medium-range hasn't reached"
+    elif medium_records:
         wind_records, wind_source_label = medium_records, f"Medium-range consensus ({MEDIUM_MODELS_LABEL})"
     elif ec46_records:
         wind_records, wind_source_label = ec46_records, "EC46 ensemble mean"
@@ -1800,7 +1807,7 @@ def main():
     ]
     if POSEIDON_ENABLED:
         tiers.append({"name": "Poseidon regional (unofficial)", "state": "live" if poseidon_records else "pending",
-                       "note": "HCMR wind + wave" if poseidon_records else f"opens ~{medium_available} (short horizon)"})
+                       "note": "HCMR wind + wave" if poseidon_records else "horizon ~5-6 days — rerun closer to the trip"})
 
     print()
     upper = None
@@ -1825,8 +1832,7 @@ def main():
         sea_records=sea_records,
         sea_opens_note=f"Sea state opens ~{medium_available} — rerun the forecast script closer to the trip",
         poseidon_records=poseidon_records,
-        poseidon_opens_note=f"HCMR Poseidon (unofficial) opens ~{medium_available} — actual horizon is much "
-                             "shorter, rerun closer to the trip",
+        poseidon_opens_note="HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip",
         tiers=tiers, sailing_summary=sailing_summary, upper=upper,
     )
     write_dashboard(payload)
