@@ -315,6 +315,8 @@
   }
   :root[data-theme="dark"] .disagree-popup .dp-badge { color: #e8a162; background: rgba(230,126,34,0.12); }
 
+  .warn-flag { color: #e67e22; font-size: .85em; cursor: pointer; }
+
   .placeholder-body {
     display: flex; align-items: center; gap: 10px;
     padding: 14px 4px; color: var(--ink-muted); font-size: 13.5px;
@@ -345,6 +347,7 @@
        fight that a longer label would force. */
     table.data-table { font-size: 11px; }
     table.data-table th, table.data-table td { padding: 4px 5px; }
+    .warn-flag { font-size: 1.1em; }
   }
 </style>
 </head>
@@ -785,7 +788,7 @@ __COASTLINE_DATA_JSON__
         if (flag) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";
-          warn.style.cssText = "color:#e67e22;font-size:.85em;cursor:pointer";
+          warn.className = "warn-flag";
           warn.setAttribute("aria-label", "Show model disagreement details");
           warn.addEventListener("click", e => {
             e.stopPropagation();
@@ -1100,7 +1103,7 @@ __COASTLINE_DATA_JSON__
         if (flag && flag.includes("dir")) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";
-          warn.style.cssText = "color:#e67e22;font-size:.85em;cursor:pointer";
+          warn.className = "warn-flag";
           warn.setAttribute("aria-label", "Show direction disagreement details");
           warn.addEventListener("click", e => {
             e.stopPropagation();
