@@ -33,6 +33,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add runs.csv dashboard.html site/index.html site/charts/ 2>/dev/null || true
+          git add runs.csv dashboard.html site/index.html
+          git add site/charts/ 2>/dev/null || true
+          # Cache chart URLs and summaries so the next run skips re-downloading
+          # unchanged ECMWF charts and avoids 14 unnecessary Claude vision calls.
+          git add charts/*.url charts/summaries.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "Automated run: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push

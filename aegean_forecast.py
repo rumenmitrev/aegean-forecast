@@ -497,7 +497,7 @@ def angular_diff(a, b):
     return abs((a - b + 180) % 360 - 180)
 
 
-def circular_mean_deg(values, min_r=0.15):
+def circular_mean_deg(values, min_r=0.5):
     """Circular mean of bearings. Returns None when the resultant vector is
     too short (min_r < 1.0), meaning the directions are too scattered to
     summarise as a single bearing -- e.g. NE+SW. Caller should render None
@@ -1069,10 +1069,18 @@ def summary_data_table(wind_records, sea_records, upper=None):
     lines = ["place,date,source,wind_mean_kt,wind_max_kt,gust_kt,dir,rain_mm,temp_lo_c,temp_hi_c,model_flag"]
     for r in wind_records:
         src = r.get("source", "?")
-        dir_str = "VAR" if r.get("dir_var") else (deg_to_compass(r.get("dir")) if r.get("dir") is not None else "-")
+        flag = r.get("flag") or ""
+        if r.get("dir_var"):
+            dir_str = "VAR"
+        elif "dir" in flag.split("+") and r.get("per_model"):
+            # Show per-model directions on flagged rows so Claude sees the split
+            pm_dirs = [deg_to_compass(v["dir"]) for v in r["per_model"].values() if v.get("dir") is not None]
+            dir_str = " / ".join(dict.fromkeys(pm_dirs)) if pm_dirs else "-"
+        else:
+            dir_str = deg_to_compass(r.get("dir")) if r.get("dir") is not None else "-"
         lines.append(f"{r['spot']},{r['date']},{src},{r.get('wind_mean')},{r.get('wind_max')},"
                       f"{r.get('gust')},{dir_str},{r.get('rain')},"
-                      f"{r.get('temp_lo')},{r.get('temp_hi')},{r.get('flag') or '-'}")
+                      f"{r.get('temp_lo')},{r.get('temp_hi')},{flag or '-'}")
 
     if any(r.get("flag") for r in wind_records):
         lines.append("")
@@ -1185,8 +1193,9 @@ far out, not a day-by-day forecast -- the ensemble mean smooths out individual f
                               "appended to the data table. z500_m is geopotential height: values above "
                               "~5850m indicate a ridge (blocking high, stable surface weather), below "
                               "~5700m indicate a trough or cutoff low (disturbed, changeable). t500_c is "
-                              "500 hPa temperature: colder than -15°C suggests atmospheric instability "
-                              "(convection risk), warmer than -10°C a stable warm cap. wind500_kt and "
+                              "500 hPa temperature: for October Aegean, colder than -20°C signals a "
+                              "genuine cold pool (instability, convection/squall risk); -10 to -15°C is "
+                              "normal background and not itself a sign of instability. wind500_kt and "
                               "flow500_dir show the steering-level jet direction. Use this to explain the "
                               "large-scale pattern behind surface wind forecasts and model disagreements.")
 
@@ -1289,7 +1298,8 @@ def generate_disagreement_notes(wind_records, upper=None):
             upper_lines.append(f"{day},{u['z500']},{u['t500']},{u['ws500']},{u['wd500']}")
         upper_section = (
             "\n\n500 hPa upper atmosphere context (GFS, central Aegean daily mean -- "
-            "z500>5850m=ridge/stable, <5700m=trough/disturbed; t500<-15°C=instability risk):\n"
+            "z500>5850m=ridge/stable, <5700m=trough/disturbed; t500<-20°C=cold pool/instability "
+            "risk for Oct Aegean, -10 to -15°C is normal background):\n"
             + "\n".join(upper_lines)
         )
 
@@ -1407,9 +1417,16 @@ def generate_chart_summaries(charts_meta):
         except Exception as e:
             print(f"  Chart summary {c['date']} {c['product']} skipped: {e}", file=sys.stderr)
 
-    # Persist updated cache
+    # Persist updated cache, pruned to only URLs present in this run so the
+    # file doesn't grow unboundedly as ECMWF publishes new runs with new URLs.
+    active_urls = set()
+    for c in charts_meta:
+        url_f = CHARTS_DIR / f"{c['date']}_{c['product']}.url"
+        if url_f.exists():
+            active_urls.add(url_f.read_text(encoding="utf-8").strip())
+    pruned = {k: v for k, v in cache.items() if k in active_urls}
     try:
-        cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache_file.write_text(json.dumps(pruned, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
     return summaries
@@ -1423,6 +1440,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
 
     wind_specs = [
         ("wind_mean", "Wind (mean)", "kt", 0),
+        ("wind_max", "Wind (max)", "kt", 0),
         ("gust", "Gust (max)", "kt", 0),
         ("rain", "Rain", "mm", 1),
         ("temp_lo", "Temp (low)", "°C", 0),
