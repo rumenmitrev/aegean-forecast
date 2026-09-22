@@ -494,13 +494,18 @@ def angular_diff(a, b):
     return abs((a - b + 180) % 360 - 180)
 
 
-def circular_mean_deg(values):
+def circular_mean_deg(values, min_r=0.15):
+    """Circular mean of bearings. Returns None when the resultant vector is
+    too short (min_r < 1.0), meaning the directions are too scattered to
+    summarise as a single bearing -- e.g. NE+SW. Caller should render None
+    as 'VAR' rather than missing data."""
     vals = [v for v in values if v is not None]
     if not vals:
         return None
     x = sum(math.cos(math.radians(v)) for v in vals)
     y = sum(math.sin(math.radians(v)) for v in vals)
-    if abs(x) < 1e-9 and abs(y) < 1e-9:
+    r = math.hypot(x, y) / len(vals)
+    if r < min_r:
         return None
     return math.degrees(math.atan2(y, x)) % 360
 
@@ -730,7 +735,7 @@ def extract_ec46_records(name, data):
     for i, day in trip_dates(d["time"]):
         g = lambda k: d.get(k, [None] * len(d["time"]))[i]
         out.append({
-            "spot": name, "date": day,
+            "spot": name, "date": day, "source": "ec46",
             "wind_mean": g("wind_speed_10m_mean"), "wind_max": g("wind_speed_10m_max"),
             "gust": g("wind_gusts_10m_max"), "dir": g("wind_direction_10m_dominant"),
             "rain": g("precipitation_sum"),
@@ -773,19 +778,28 @@ def extract_medium_records(name, cells):
         flags = []
         if len(speeds) >= 2 and (max(speeds) - min(speeds)) > SPREAD_WIND_KT:
             flags.append("wind")
-        if speeds and max(speeds) >= DIR_FLAG_MIN_WIND_KT:
-            diffs = [angular_diff(a, b) for idx, a in enumerate(dirs) for b in dirs[idx + 1:]]
-            if any(x is not None and x > SPREAD_DIR_DEG for x in diffs):
-                flags.append("dir")
+        # Only compare directions between models that are actually blowing
+        # above the minimum threshold -- a near-calm model's arbitrary bearing
+        # should not trigger a direction flag.
+        active_dirs = [v["dir"] for v in per_model.values()
+                       if v.get("wind_mean") is not None
+                       and v["wind_mean"] >= DIR_FLAG_MIN_WIND_KT
+                       and v.get("dir") is not None]
+        dir_diffs = [angular_diff(a, b) for idx, a in enumerate(active_dirs) for b in active_dirs[idx + 1:]]
+        if len(active_dirs) >= 2 and any(x is not None and x > SPREAD_DIR_DEG for x in dir_diffs):
+            flags.append("dir")
 
-        dir_diffs = [angular_diff(a, b) for idx, a in enumerate(dirs) for b in dirs[idx + 1:]]
         max_dir_diff = max((x for x in dir_diffs if x is not None), default=None)
+        dir_mean = circular_mean_deg(dirs)
         out.append({
-            "spot": name, "date": day,
+            "spot": name, "date": day, "source": "medium",
             "wind_mean": mean([v["wind_mean"] for v in per_model.values()]),
             "wind_max": mean([v["wind_max"] for v in per_model.values()]),
             "gust": max(gusts) if gusts else None,
-            "dir": circular_mean_deg(dirs),
+            "dir": dir_mean,
+            # True when directions exist but cancel out (opposed/scattered models).
+            # Lets the dashboard distinguish VAR from genuinely missing data.
+            "dir_var": dir_mean is None and len(dirs) >= 2,
             "rain": mean([v["rain"] for v in per_model.values()]),
             "temp_lo": mean([v["temp_lo"] for v in per_model.values()]),
             "temp_hi": mean([v["temp_hi"] for v in per_model.values()]),
@@ -795,7 +809,9 @@ def extract_medium_records(name, cells):
             "wind_span": (min(speeds), max(speeds)) if speeds else None,
             "gust_span": (min(gusts), max(gusts)) if len(gusts) >= 2 else None,
             "dir_spread": round(max_dir_diff) if max_dir_diff is not None else None,
-            "per_model": per_model,  # raw breakdown, for the CSV and popup
+            # Drop models where every field is None (beyond their forecast horizon).
+            "per_model": {m: v for m, v in per_model.items()
+                          if any(val is not None for val in v.values())},
         })
     return out
 
@@ -1016,7 +1032,8 @@ def build_direction_block(records, dates, field, label, source_label, no_data_no
         for d in dates:
             match = next((r for r in records if r["spot"] == spot and r["date"] == d), None)
             deg = match.get(field) if match else None
-            compass_vals.append(deg_to_compass(deg) if deg is not None else None)
+            is_var = match.get("dir_var", False) if match else False
+            compass_vals.append("VAR" if is_var else (deg_to_compass(deg) if deg is not None else None))
             deg_vals.append(deg)
         series[spot] = compass_vals
         raw[spot] = deg_vals
@@ -1046,11 +1063,13 @@ def summary_data_table(wind_records, sea_records, upper=None):
     full wind/temp/rain table (with the model-disagreement flag column),
     a per-model breakdown on any day models disagreed, sea state when
     available, and 500 hPa upper-atmosphere context when provided."""
-    lines = ["place,date,wind_mean_kt,gust_kt,dir,rain_mm,temp_lo_c,temp_hi_c,model_flag"]
+    lines = ["place,date,source,wind_mean_kt,wind_max_kt,gust_kt,dir,rain_mm,temp_lo_c,temp_hi_c,model_flag"]
     for r in wind_records:
-        lines.append(f"{r['spot']},{r['date']},{r.get('wind_mean')},{r.get('gust')},"
-                      f"{r.get('dir')},{r.get('rain')},{r.get('temp_lo')},{r.get('temp_hi')},"
-                      f"{r.get('flag') or '-'}")
+        src = r.get("source", "?")
+        dir_str = "VAR" if r.get("dir_var") else (deg_to_compass(r.get("dir")) if r.get("dir") is not None else "-")
+        lines.append(f"{r['spot']},{r['date']},{src},{r.get('wind_mean')},{r.get('wind_max')},"
+                      f"{r.get('gust')},{dir_str},{r.get('rain')},"
+                      f"{r.get('temp_lo')},{r.get('temp_hi')},{r.get('flag') or '-'}")
 
     if any(r.get("flag") for r in wind_records):
         lines.append("")
@@ -1137,7 +1156,12 @@ wind/temp/rain/direction, max for gust -- so the gust figure shown is deliberate
 gust anywhere in that patch across all models, a safety margin rather than a literal single-point \
 prediction. model_flag marks a day where the models disagree by more than {SPREAD_WIND_KT}kt (wind) or \
 {SPREAD_DIR_DEG} degrees (direction, only counted when wind is at least {DIR_FLAG_MIN_WIND_KT}kt) -- treat \
-those days' numbers as less certain; the per-model breakdown further down gives the actual spread."""
+those days' numbers as less certain; the per-model breakdown further down gives the actual spread. \
+The data table has a 'source' column: 'medium' = kernel/consensus data as above; 'ec46' = EC46 ensemble \
+mean fill-in for dates beyond the medium-range horizon (treat as regime tendency, not a day-by-day forecast \
+-- the falling mean late in the week is a sign of uncertainty smoothing, not necessarily a calming trend). \
+For gusts: compare the gust column against wind_max (ratio ~1.3-1.5 for open sea is normal), not wind_mean \
+-- wind_mean averages 24 hours while gust is the single worst moment from the worst cell and model."""
     elif wind_source_label.startswith("EC46"):
         data_methodology = """How the wind/temp/rain figures below were produced: this is ECMWF's own \
 EC46 sub-seasonal 51-member ensemble mean at ~36km resolution -- a single number per spot/day, already \
@@ -1332,9 +1356,26 @@ def generate_chart_summaries(charts_meta):
         print("Chart summaries skipped: pip install anthropic", file=sys.stderr)
         return {}
 
+    # Summaries are cached in a JSON file keyed by chart URL so we don't
+    # re-call Claude when the chart image hasn't changed between runs.
+    cache_file = CHARTS_DIR / "summaries.json"
+    cache = {}
+    if cache_file.exists():
+        try:
+            cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            cache = {}
+
     for c in charts_meta:
         key = f"{c['date']}_{c['product']}"
         src = CHARTS_DIR / pathlib.Path(c["src"]).name
+        url_file = CHARTS_DIR / f"{c['date']}_{c['product']}.url"
+        chart_url = url_file.read_text(encoding="utf-8").strip() if url_file.exists() else key
+
+        if chart_url in cache:
+            summaries[key] = cache[chart_url]
+            print(f"  Chart summary {c['date']} {c['product']}: cached")
+            continue
         if not src.exists():
             continue
         try:
@@ -1358,9 +1399,16 @@ def generate_chart_summaries(charts_meta):
             text = next((b.text for b in response.content if b.type == "text"), "").strip()
             if text:
                 summaries[key] = text
+                cache[chart_url] = text
                 print(f"  Chart summary {c['date']} {c['product']}: {text[:80]}...")
         except Exception as e:
             print(f"  Chart summary {c['date']} {c['product']} skipped: {e}", file=sys.stderr)
+
+    # Persist updated cache
+    try:
+        cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     return summaries
 
 
@@ -1724,16 +1772,15 @@ def main():
                 if url:
                     any_chart = True
                     dest = CHARTS_DIR / f"{date.isoformat()}_{prod_id}.png"
-                    already_today = (
-                        dest.exists()
-                        and dt.datetime.fromtimestamp(dest.stat().st_mtime, tz=TRIP_TZ).date() == today
-                    )
-                    if already_today:
-                        print(f"    {date}: already have today's chart at {dest.name}")
+                    url_cache = CHARTS_DIR / f"{date.isoformat()}_{prod_id}.url"
+                    cached_url = url_cache.read_text(encoding="utf-8").strip() if url_cache.exists() else ""
+                    if dest.exists() and cached_url == url:
+                        print(f"    {date}: chart unchanged (same URL), skipping")
                         date += dt.timedelta(days=1)
                         continue
                     try:
                         save_chart(url, dest)
+                        url_cache.write_text(url, encoding="utf-8")
                         print(f"    {date}: saved {dest.name}")
                     except Exception as e:
                         print(f"    {date}: failed to save chart ({e})", file=sys.stderr)

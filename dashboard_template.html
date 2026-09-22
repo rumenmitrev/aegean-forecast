@@ -1101,9 +1101,11 @@ __COASTLINE_DATA_JSON__
         const td = document.createElement("td");
         const flag = param.flags && param.flags[p] && param.flags[p][i];
         const dirPM = param.dirPerModel && param.dirPerModel[p] && param.dirPerModel[p][i];
+        const cellVal = param.series[p][i];
         // On a direction-flagged day show per-model directions instead of the
-        // circular mean, which would misrepresent models pointing opposite ways.
-        td.textContent = (flag && flag.includes("dir") && dirPM) ? dirPM : (param.series[p][i] || "–");
+        // circular mean. If the mean was undefined (VAR), show that as-is.
+        td.textContent = (flag && flag.includes("dir") && dirPM && cellVal !== "VAR")
+          ? dirPM : (cellVal || "–");
         if (flag && flag.includes("dir")) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";
