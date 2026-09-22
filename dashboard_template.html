@@ -329,6 +329,8 @@
     font-size: 12px; color: var(--ink-muted); line-height: 1.6;
   }
   footer.foot b { color: var(--ink-secondary); }
+  footer.foot a { color: var(--accent); text-decoration: none; }
+  footer.foot a:hover { text-decoration: underline; }
 
   @media (max-width: 640px) {
     h1 { font-size: 30px; }
@@ -447,6 +449,18 @@
     &mdash; it can change or vanish without notice, unlike every other source described above, and some coastal
     spots simply have no wave data (a masked/land grid cell in HCMR's model, shown as &ldquo;&ndash;&rdquo;
     rather than a real reading).</p>
+
+    <p><b>Before you go &mdash; official sources:</b> this tool helps you understand the picture;
+    these decide whether you depart.
+    <a href="https://www.emy.gr/emy/en/maritime/maritime_fore" target="_blank" rel="noopener">HNMS&nbsp;(EMY) maritime forecast</a>
+    &middot;
+    <a href="https://www.emy.gr/emy/en/maritime/meteoalarm" target="_blank" rel="noopener">EMY weather warnings</a>
+    &middot;
+    <a href="https://www.meteo.gr/cf-international.cfm?city_id=32" target="_blank" rel="noopener">meteo.gr Aegean</a>
+    &middot;
+    Navtex (518&nbsp;kHz, Iraklion&nbsp;J / Athens&nbsp;H)
+    &middot;
+    VHF Ch&nbsp;16 &rarr; Ch&nbsp;25/26 for Greek coastguard weather.</p>
   </footer>
 
 </div>
@@ -605,7 +619,7 @@ __COASTLINE_DATA_JSON__
 
     const label = document.createElement("p");
     label.className = "summary-label";
-    label.textContent = "Sailing summary · AI-generated, read the numbers above too";
+    label.textContent = "AI sailing summary · interpretation only — verify with official forecasts before departing";
     card.appendChild(label);
     // Multiple paragraphs requested from the model -- render each on its
     // own <p> instead of one dense block.
