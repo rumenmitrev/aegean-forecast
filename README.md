@@ -55,13 +55,27 @@ kernel costs nothing extra in requests.
   for wind/temp/rain/direction, max for gust. So the gust shown is deliberately the strongest
   plausible gust anywhere in that ~30x25 km patch, across every configured model -- a safety
   margin, not a literal single-point prediction.
+- **Wind (max)**: the daily highest hourly mean wind. Shown alongside gust so you can compute
+  the gust/wind-max ratio (1.3–1.5 is normal open-sea; well above that is worth noting). Gust
+  is the single worst 3-second moment from the worst kernel cell across all models; wind-max is
+  a more meaningful comparator than wind-mean (which averages 24 hours including calm nights).
 - **Model disagreement**: a place/day is flagged when the models' wind speeds spread by more
   than `area.json`'s `spread_wind_kt` (default 6kt), or their directions by more than
   `spread_dir_deg` (default 45deg) while wind is at least `dir_flag_min_wind_kt` (default 5kt).
-  Flagged days show the actual min-max span instead of a blended mean in both the Wind and
-  Wind Direction cards. Clicking a ⚠ cell opens a popup with the per-model wind/direction/gust
-  table, numeric spread figures with thresholds, and an AI-generated note explaining what the
-  spread means for forecast confidence that day.
+  Only models blowing above the wind threshold are compared for direction. Flagged wind cells
+  show the actual min–max span instead of a blended mean; flagged direction cells show the
+  per-model bearings (e.g. `NE / SW`); when the model directions cancel completely the cell
+  shows **VAR**. The circular mean is computed with `min_r=0.5` for the model consensus (VAR
+  when resultant < 50%, i.e. spread > 120°) and `min_r=0.15` elsewhere (per-model kernel
+  average, Poseidon daily mean, 500 hPa flow, week's predominant direction). Clicking a ⚠ cell
+  opens a popup with the per-model table, numeric spreads, and an AI note for that day.
+- **EC46 gap-fill**: when medium-range and EC46 are both live, dates beyond the medium-range
+  horizon are filled from EC46. Each record carries a `source` field (`"medium"` or `"ec46"`)
+  passed to the AI prompt so it doesn't misread EC46's smoothed late-week values as a consensus
+  calm forecast.
+- **Poseidon directions**: HCMR's `wangle` field is the direction the wind/waves blow **toward**
+  (TO convention), confirmed by cross-check against Open-Meteo GFS. Both wind and wave wangle
+  are converted to FROM convention (`+180° mod 360`) before use.
 
 Sea state (wave height, period, direction; Open-Meteo Marine) uses the same 3x3 kernel and the
 same max-vs-mean split: **wave height is the kernel max** (a boat crossing this patch of sea can

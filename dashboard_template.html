@@ -393,25 +393,27 @@
     charts.ecmwf.int &mdash; all via <b>aegean_forecast.py</b>. Each place uses its nearest sea grid
     cell, not land.</p>
 
-    <p><b>How the medium-range wind/temp/rain/gust numbers are calculated:</b> each of the configured
+    <p><b>How the medium-range wind numbers are calculated:</b> each of the configured
     models (<span class="mm-label"></span>) is sampled over a 3&times;3 grid of points around every place
     &mdash; roughly 30&times;25&nbsp;km, not a single GPS pin &mdash; because a boat sailing that spot
     experiences the whole patch of sea around it, not one exact point. Wind speed, direction, temperature,
     and rain are the <b>mean</b> across those 9 points per model, which smooths out single-cell grid noise.
-    Gust is the <b>max</b> across those 9 points instead of the mean &mdash; gust is already a worst-case
-    figure, so averaging it away would blunt a real local spike (a gap-wind gust one grid cell over, say)
-    instead of surfacing it. The models are then combined the same way on top of that: mean for
-    wind/temp/rain/direction, max for gust &mdash; so the gust shown is the strongest plausible gust
-    anywhere in that patch, across all of them. That makes it a safety margin by design, deliberately
-    higher than "the exact point forecast," not a bug.</p>
+    Gust and wind max are taken as the <b>max</b> across those 9 points &mdash; both are worst-case figures
+    where averaging would hide a real local peak. The models are then combined the same way on top:
+    mean for wind/temp/rain/direction, max for gust &mdash; so the gust shown is the strongest plausible
+    gust anywhere in that patch, across all models, a safety margin by design.
+    <b>Wind (max)</b> is the daily maximum mean wind (the highest hourly average in the day), useful as a
+    comparator for gusts: a gust/wind-max ratio of 1.3&ndash;1.5 is normal for open sea. A ratio well
+    above that, or a gust much larger than wind-max, is worth noting.</p>
 
     <p><b>Model disagreement:</b> a place/day is flagged (&#9888;) when the models' wind speeds spread by
     more than <span class="sw"></span>, or their directions by more than <span class="sd"></span> while
-    wind is at least <span class="dw"></span>. On a flagged day the wind cell shows the actual
-    min&ndash;max span across models instead of one blended number (a mean of two very different model
-    reads would misrepresent both), and the full per-model breakdown always goes into <b>runs.csv</b> and
-    into the data given to the AI summary above, so it can explain what the disagreement means for that
-    day rather than silently averaging past it.</p>
+    wind is at least <span class="dw"></span>. On a flagged wind cell, the cell shows the actual
+    min&ndash;max span (e.g. 10&ndash;17&nbsp;kt) instead of one blended number. On a flagged direction cell,
+    it shows the per-model bearings (e.g. NE&nbsp;/&nbsp;SW) instead of the circular mean; if the model
+    directions cancel completely, the cell shows <b>VAR</b>. Clicking any &#9888; cell opens a popup with
+    the full per-model table, the numeric spread, and an AI note explaining what the disagreement means
+    for that day. The per-model breakdown also goes into <b>runs.csv</b> and the AI sailing summary.</p>
 
     <p><b>Sea state</b> (wave height, period, direction) uses the same 3&times;3 kernel as wind, since a
     boat crossing a patch of sea can meet its roughest cell, not just the exact point: wave height is the
@@ -422,9 +424,12 @@
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
     day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
     &sim;36&nbsp;km resolution) is the one tier still read at a single point, with no kernel or per-model
-    combine &mdash; it's already someone else's finished ensemble mean. Rows show the region's actual spread
-    (sheltered vs. exposed spots), never a single averaged number, since this route crosses both. This page
-    regenerates automatically on every run.</p>
+    combine &mdash; it's already someone else's finished ensemble mean. EC46 also fills the back half of
+    the trip when the medium-range horizon hasn't reached those dates yet (the source column in the raw
+    data distinguishes which rows are which). A low EC46 mean late in the week signals uncertainty and
+    ensemble smoothing, not a guaranteed calm. Rows show the region's actual spread (sheltered
+    vs.&nbsp;exposed spots), never a single averaged number, since this route crosses both. This page
+    regenerates on every run.</p>
 
     <!-- Hidden by buildFooter() when area.json's poseidon_enabled is false
          -- see the "poseidon" id below. -->
