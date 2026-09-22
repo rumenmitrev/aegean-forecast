@@ -645,19 +645,25 @@ def fetch_500hpa(dates):
 
 
 def fetch_convection(dates):
-    """Daily convection indicators for the trip: max CAPE (J/kg), mean 850 hPa
-    temperature (°C), and sea surface temperature (°C, last available value
-    carried forward since marine SST forecast is shorter than medium-range wind).
-    Returns {date_str: {cape, t850, sst, delta}} where delta = SST - T850.
-    Thresholds: CAPE > 500 J/kg = moderate convective potential; delta > 13°C =
-    elevated waterspout / squall risk for the Mediterranean."""
-    coords = list(SPOTS.values())
-    clat = round(sum(c[0] for c in coords) / len(coords), 2)
-    clon = round(sum(c[1] for c in coords) / len(coords), 2)
+    """Daily convection indicators: worst-case CAPE and SST-T850 across all
+    spots (squalls are local; a centroid average can hide a dangerous spot).
+    One batched Open-Meteo call fetches all spots at once.
+
+    Uses daily-max CAPE and daily-min T850 (coldest air = worst instability).
+    SST is the last available value from the marine forecast, carried forward
+    for dates beyond that horizon (changes slowly in autumn).
+
+    Thresholds (Mediterranean): CAPE > 500 J/kg = moderate convective
+    potential; SST-T850 > 13°C = elevated waterspout / squall risk.
+    Note: GFS CAPE has low skill beyond ~5 days; treat it as a rough signal."""
+    spot_list = list(SPOTS.values())
+    lats = ",".join(str(c[0]) for c in spot_list)
+    lons = ",".join(str(c[1]) for c in spot_list)
     out = {}
+
     try:
         r1 = fetch("https://api.open-meteo.com/v1/forecast", {
-            "latitude": clat, "longitude": clon,
+            "latitude": lats, "longitude": lons,
             "daily": "cape_max",
             "hourly": "temperature_850hPa",
             "models": "gfs_seamless",
@@ -665,37 +671,66 @@ def fetch_convection(dates):
             "timezone": TRIP_TZ.key,
             "cell_selection": CELL_SELECTION,
         })
-        cape_daily = dict(zip(r1["daily"]["time"], r1["daily"]["cape_max"]))
-        t850_hourly = list(zip(r1["hourly"]["time"], r1["hourly"]["temperature_850hPa"]))
+        # Normalise single-location response to list
+        if isinstance(r1, dict):
+            r1 = [r1]
+        # Worst (max) CAPE across spots per day
+        cape_by_date = {}
+        for spot_data in r1:
+            for t, v in zip(spot_data["daily"]["time"], spot_data["daily"]["cape_max"]):
+                if v is not None:
+                    cape_by_date[t] = max(cape_by_date.get(t, 0), v)
+        # Min T850 across spots per day (coldest air = worst instability)
+        t850_min_by_date = {}
+        for spot_data in r1:
+            for t, v in zip(spot_data["hourly"]["time"], spot_data["hourly"]["temperature_850hPa"]):
+                if v is None:
+                    continue
+                day = t[:10]
+                if day not in t850_min_by_date or v < t850_min_by_date[day]:
+                    t850_min_by_date[day] = v
     except Exception as e:
         print(f"Convection CAPE/T850 fetch skipped: {e}", file=sys.stderr)
         return {}
 
+    # SST: single central point is fine (varies little over 150 km in autumn).
     sst_last = None
+    sst_last_date = None
     try:
+        coords = list(SPOTS.values())
+        clat = round(sum(c[0] for c in coords) / len(coords), 2)
+        clon = round(sum(c[1] for c in coords) / len(coords), 2)
         r2 = fetch("https://marine-api.open-meteo.com/v1/marine", {
             "latitude": clat, "longitude": clon,
             "hourly": "sea_surface_temperature",
             "forecast_days": MEDIUM_RANGE_DAYS,
             "timezone": TRIP_TZ.key,
+            "cell_selection": CELL_SELECTION,
         })
-        sst_vals = [(t, v) for t, v in zip(r2["hourly"]["time"],
-                                            r2["hourly"]["sea_surface_temperature"])
-                    if v is not None]
-        if sst_vals:
-            sst_last = sst_vals[-1][1]  # last available, carried forward
+        sst_pairs = [(t, v) for t, v in zip(r2["hourly"]["time"],
+                                              r2["hourly"]["sea_surface_temperature"])
+                     if v is not None]
+        if sst_pairs:
+            sst_last_date = sst_pairs[-1][0][:10]
+            sst_last = sst_pairs[-1][1]
     except Exception as e:
         print(f"Convection SST fetch skipped: {e}", file=sys.stderr)
 
     date_set = {d.isoformat() if hasattr(d, "isoformat") else d for d in dates}
     for date in date_set:
-        cape = cape_daily.get(date)
-        t850_day = [v for t, v in t850_hourly if t.startswith(date) and v is not None]
-        t850 = round(sum(t850_day) / len(t850_day), 1) if t850_day else None
+        cape = cape_by_date.get(date)
+        t850 = t850_min_by_date.get(date)
+        if t850 is not None:
+            t850 = round(t850, 1)
         sst = round(sst_last, 1) if sst_last is not None else None
+        sst_cf = sst is not None and (sst_last_date is None or date > sst_last_date)
         delta = round(sst - t850, 1) if sst is not None and t850 is not None else None
-        out[date] = {"cape": round(cape) if cape is not None else None,
-                     "t850": t850, "sst": sst, "delta": delta}
+        out[date] = {
+            "cape": round(cape) if cape is not None else None,
+            "t850": t850, "sst": sst,
+            "sstCarriedForward": sst_cf,  # True when SST is extrapolated past marine horizon
+            "delta": delta,
+        }
     return out
 
 
@@ -1332,7 +1367,7 @@ present in it."""
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
         text = next((b.text for b in response.content if b.type == "text"), "")
@@ -1424,7 +1459,7 @@ Data:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in response.content if b.type == "text"), "")
@@ -1630,19 +1665,20 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         else:
             params[key] = placeholder_block(label, unit, sea_opens_note)
 
-    # Short-period sea warning: Hs > 0.8 m with period < 6 s is steep, choppy
-    # and more uncomfortable than height alone suggests -- flag those cells.
+    # Steep-sea warning using wave steepness: Hs / wavelength, where
+    # wavelength ≈ 1.56 * T² (deep water). steep > 0.04 catches roughly:
+    # 1.0 m @ 4 s, 1.6 m @ 5 s, 2.3 m @ 6 s -- triggered by actually steep
+    # seas rather than "short period" which fires too often in the Aegean.
     if sea_records and params["wave"].get("available") and params["period"].get("available"):
-        short_warn = {}
+        steep_warn = {}
         for spot in list(SPOTS.keys()):
-            short_warn[spot] = []
+            steep_warn[spot] = []
             for i, d in enumerate(dates):
                 ht = params["wave"]["series"][spot][i]
                 per = params["period"]["series"][spot][i]
-                short_warn[spot].append(
-                    ht is not None and ht > 0.8 and per is not None and per < 6.0
-                )
-        params["wave"]["shortPeriodWarn"] = short_warn
+                steep = (ht / (1.56 * per ** 2)) if (ht and per) else 0
+                steep_warn[spot].append(steep > 0.04)
+        params["wave"]["shortPeriodWarn"] = steep_warn
 
     if sea_records:
         params["wave_dir"] = build_direction_block(sea_records, dates, "dir", "Wave direction", "Open-Meteo Marine",
@@ -1725,6 +1761,8 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         "charts": charts_meta,
         "convection": convection or {},
         "officialSources": OFFICIAL_SOURCES,
+        "spotCoords": {name: list(coords) for name, coords in SPOTS.items()},
+        "timezone": TRIP_TZ.key,
     }
 
 

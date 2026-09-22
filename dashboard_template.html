@@ -214,6 +214,34 @@
   .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
   .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
 
+  /* Passage planner card */
+  .leg-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+  .leg-controls label { display: flex; flex-direction: column; gap: 3px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); font-weight: 600; }
+  .leg-controls select, .leg-controls input[type=number] {
+    background: var(--surface-page); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--ink-primary); font-size: 13px; padding: 5px 8px; min-width: 80px; }
+  .leg-controls select { min-width: 140px; }
+  .leg-plan-btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: "Public Sans", sans-serif; white-space: nowrap; align-self: flex-end;
+  }
+  .leg-plan-btn:hover { opacity: .88; }
+  .leg-plan-btn:disabled { opacity: .45; cursor: default; }
+  .leg-summary { font-size: 13px; color: var(--ink-secondary); margin-bottom: 10px; }
+  .leg-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .leg-table th { text-align: left; color: var(--ink-muted); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+  .leg-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--gridline); color: var(--ink-primary); }
+  .leg-table td.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .leg-sail-beat  { color: #c0391a; font-weight: 600; }
+  .leg-sail-reach { color: var(--status-good); }
+  .leg-sail-run   { color: var(--ink-secondary); }
+  .leg-warn       { background: rgba(230,126,34,0.10); }
+  .leg-bad        { background: rgba(192,57,26,0.10); }
+  .leg-error      { color: var(--ink-muted); font-size: 13px; padding: 12px 0; }
+
   /* Convection / instability card */
   .conv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
   .conv-table th { text-align: left; color: var(--ink-muted); font-weight: 500; font-size: 11px;
@@ -396,6 +424,17 @@
 
   <!-- Claude-generated narrative synthesis of the data below -- null
        (hidden) if ANTHROPIC_API_KEY wasn't set or the call failed this run. -->
+  <!-- Official sources rendered by buildFooter() from DATA.officialSources;
+       placed here (above the AI summary) so it's seen before the AI text. -->
+  <div id="official-sources-bar" hidden style="
+    font-size:12.5px; color:var(--ink-secondary); margin-bottom:10px;
+    padding:8px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface-card); line-height:1.7;
+  ">
+    <strong>Before you go:</strong> <span id="official-sources-list"></span>
+    <span style="color:var(--ink-muted);"> — these decide whether you depart; the AI summary below is interpretation only.</span>
+  </div>
+
   <section class="summary-card" id="summary-card" hidden></section>
 
   <main id="cards"></main>
@@ -439,9 +478,10 @@
     state is a single model (Open-Meteo Marine), so there's no further multi-model combine on top like
     wind has &mdash; the kernel is the only combining step here. <b>Wave height is significant wave height
     (Hs)</b>, the average of the highest third of waves; the occasional largest wave is roughly
-    1.5&ndash;2&times; that. Period matters as much as height: cells highlighted in amber are short-period
-    seas (Hs&nbsp;&gt;&nbsp;0.8&nbsp;m, period&nbsp;&lt;&nbsp;6&nbsp;s) &mdash; steeper and more
-    uncomfortable than the height alone suggests.</p>
+    1.5&ndash;2&times; that. Cells highlighted in amber are <b>steep seas</b> (wave steepness
+    Hs&nbsp;/&nbsp;1.56T²&nbsp;&gt;&nbsp;0.04 &mdash; roughly 1.0&nbsp;m at 4&nbsp;s, 1.6&nbsp;m
+    at 5&nbsp;s, 2.3&nbsp;m at 6&nbsp;s), which are uncomfortable and potentially dangerous
+    regardless of height alone.</p>
 
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
     day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
@@ -466,9 +506,6 @@
     spots simply have no wave data (a masked/land grid cell in HCMR's model, shown as &ldquo;&ndash;&rdquo;
     rather than a real reading).</p>
 
-    <!-- Populated by buildFooterSources() from DATA.officialSources -->
-    <p id="official-sources-p" hidden><b>Before you go &mdash; official sources:</b> this tool helps you
-    understand the picture; these decide whether you depart. <span id="official-sources-list"></span></p>
   </footer>
 
 </div>
@@ -632,7 +669,7 @@ __COASTLINE_DATA_JSON__
           list.appendChild(document.createTextNode(s.label));
         }
       });
-      document.getElementById("official-sources-p").hidden = false;
+      document.getElementById("official-sources-bar").hidden = false;
     }
   }
 
@@ -846,9 +883,9 @@ __COASTLINE_DATA_JSON__
           td.style.cursor = "pointer";
           td.addEventListener("click", () => showDisagreementPopup(param, p, i, date));
         }
-        // Short-period sea: Hs > 0.8 m with period < 6 s is steep and choppy
+        // Steep sea warning (steepness Hs/1.56T² > 0.04)
         if (param.shortPeriodWarn && param.shortPeriodWarn[p] && param.shortPeriodWarn[p][i]) {
-          td.title = "Short-period sea — steeper and more uncomfortable than height alone suggests";
+          td.title = "Steep sea (Hs/1.56T² > 0.04) — uncomfortable regardless of height alone";
           td.style.background = "rgba(230,126,34,0.12)";
           td.style.fontWeight = "600";
         }
@@ -1227,6 +1264,276 @@ __COASTLINE_DATA_JSON__
     return card;
   }
 
+  // ─── Passage planner ───────────────────────────────────────────────────────
+
+  function haversineNm(lat1, lon1, lat2, lon2) {
+    const R = 3440.065;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function rhumbBearing(lat1, lon1, lat2, lon2) {
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const dPhi = Math.log(Math.tan((lat2*Math.PI/180)/2 + Math.PI/4) /
+                          Math.tan((lat1*Math.PI/180)/2 + Math.PI/4));
+    const q = Math.abs(dPhi) > 1e-10 ? dLon/dPhi : Math.cos(lat1*Math.PI/180);
+    return (Math.atan2(dLon, dPhi) * 180/Math.PI + 360) % 360;
+  }
+
+  function interpolatePt(lat1, lon1, lat2, lon2, frac) {
+    return [lat1 + (lat2-lat1)*frac, lon1 + (lon2-lon1)*frac];
+  }
+
+  function windAngleDeg(windFrom, heading) {
+    const diff = ((windFrom - heading) + 360) % 360;
+    return Math.round(Math.min(diff, 360-diff));
+  }
+
+  function windSide(windFrom, heading) {
+    return ((windFrom - heading + 360) % 360) < 180 ? "P" : "S";
+  }
+
+  function pointOfSail(angle) {
+    if (angle < 40)  return { label: "Close-hauled", cls: "leg-sail-beat" };
+    if (angle < 70)  return { label: "Close reach",  cls: "leg-sail-beat" };
+    if (angle < 110) return { label: "Beam reach",   cls: "leg-sail-reach" };
+    if (angle < 150) return { label: "Broad reach",  cls: "leg-sail-reach" };
+    return               { label: "Run",             cls: "leg-sail-run" };
+  }
+
+  function rowClass(speed) {
+    if (speed >= 25) return "leg-bad";
+    if (speed >= 18) return "leg-warn";
+    return "";
+  }
+
+  async function fetchLegWind(waypoints, timezone) {
+    const lats = waypoints.map(w => w[0].toFixed(4)).join(",");
+    const lons = waypoints.map(w => w[1].toFixed(4)).join(",");
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", lats);
+    url.searchParams.set("longitude", lons);
+    url.searchParams.set("hourly", "windspeed_10m,winddirection_10m,windgusts_10m");
+    url.searchParams.set("models", "gfs_seamless");
+    url.searchParams.set("wind_speed_unit", "kn");
+    url.searchParams.set("forecast_days", "16");
+    url.searchParams.set("timezone", timezone);
+    url.searchParams.set("cell_selection", "sea");
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+    const d = await r.json();
+    // Normalise: single location returns object, multi returns array
+    return Array.isArray(d) ? d : [d];
+  }
+
+  function buildLegCard() {
+    const places = DATA.places;
+    const labels = DATA.labels;
+    const spotCoords = {}; // populated below from DATA -- need coords
+    // Coords are embedded via a helper; we borrow from the map's spot list
+    // which JS already has. We'll re-fetch from Open-Meteo using spot names.
+    // Coord lookup: stored in DATA.spotCoords (added to payload).
+    const coords = DATA.spotCoords || {};
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const h2 = document.createElement("h2");
+    h2.className = "card-title";
+    h2.textContent = "Passage planner";
+    titleWrap.appendChild(h2);
+    const sub = document.createElement("div");
+    sub.className = "card-unit";
+    sub.textContent = "GFS hourly · fetched live";
+    titleWrap.appendChild(sub);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    // Controls
+    const ctrl = document.createElement("div");
+    ctrl.className = "leg-controls";
+
+    function makeSelect(labelText, id, opts) {
+      const lbl = document.createElement("label");
+      lbl.setAttribute("for", id);
+      lbl.textContent = labelText;
+      const sel = document.createElement("select");
+      sel.id = id;
+      opts.forEach(([val, text]) => {
+        const o = document.createElement("option"); o.value = val; o.textContent = text; sel.appendChild(o);
+      });
+      lbl.appendChild(sel);
+      ctrl.appendChild(lbl);
+      return sel;
+    }
+
+    function makeInput(labelText, id, type, val, min, max, step) {
+      const lbl = document.createElement("label");
+      lbl.setAttribute("for", id);
+      lbl.textContent = labelText;
+      const inp = document.createElement("input");
+      inp.type = type; inp.id = id; inp.value = val;
+      if (min !== undefined) inp.min = min;
+      if (max !== undefined) inp.max = max;
+      if (step !== undefined) inp.step = step;
+      inp.style.width = "72px";
+      lbl.appendChild(inp);
+      ctrl.appendChild(lbl);
+      return inp;
+    }
+
+    const spotOpts = places.map(p => [p, labels[p]?.short || p]);
+    const fromSel = makeSelect("From", "leg-from", spotOpts);
+    const toSel   = makeSelect("To",   "leg-to",   spotOpts);
+    if (places.length > 1) toSel.value = places[1];
+
+    const dateOpts = DATA.dates.map((d, i) => [d, dateLabel(d, i===0) + (i===0?"":" "+d.slice(5,7)+"/"+d.slice(8))]);
+    const dateSel  = makeSelect("Date", "leg-date", dateOpts);
+
+    const hourInp  = makeInput("Depart (UTC+3)", "leg-hour", "number", 8, 0, 23, 1);
+    const speedInp = makeInput("Speed (kt)", "leg-speed", "number", 5, 1, 20, 0.5);
+
+    const btn = document.createElement("button");
+    btn.className = "leg-plan-btn";
+    btn.textContent = "Plan passage";
+    ctrl.appendChild(btn);
+    card.appendChild(ctrl);
+
+    // Results area
+    const results = document.createElement("div");
+    card.appendChild(results);
+
+    btn.addEventListener("click", async () => {
+      const fromSpot = fromSel.value;
+      const toSpot   = toSel.value;
+      if (fromSpot === toSpot) { results.innerHTML = '<p class="leg-error">Select two different spots.</p>'; return; }
+      const c1 = coords[fromSpot], c2 = coords[toSpot];
+      if (!c1 || !c2) { results.innerHTML = '<p class="leg-error">Coordinates unavailable.</p>'; return; }
+
+      btn.disabled = true;
+      btn.textContent = "Fetching…";
+      results.innerHTML = "";
+
+      try {
+        const [lat1, lon1] = c1, [lat2, lon2] = c2;
+        const distNm  = haversineNm(lat1, lon1, lat2, lon2);
+        const bearing = rhumbBearing(lat1, lon1, lat2, lon2);
+        const speed   = parseFloat(speedInp.value) || 5;
+        const etaH    = distNm / speed;
+        const depHour = parseInt(hourInp.value) || 8;
+        const depDate = dateSel.value;
+
+        // Waypoints: from + 5 intermediate + to
+        const N = 7;
+        const waypoints = Array.from({length: N}, (_, i) => interpolatePt(lat1, lon1, lat2, lon2, i/(N-1)));
+
+        const wpData = await fetchLegWind(waypoints, DATA.timezone || "Europe/Athens");
+
+        // Build per-hour table
+        const summaryDiv = document.createElement("div");
+        summaryDiv.className = "leg-summary";
+        summaryDiv.textContent =
+          `${labels[fromSpot]?.short || fromSpot} → ${labels[toSpot]?.short || toSpot} · ` +
+          `${Math.round(distNm)} nm · bearing ${Math.round(bearing)}° · ETA ~${etaH.toFixed(1)} h`;
+        results.appendChild(summaryDiv);
+
+        const scroll = document.createElement("div");
+        scroll.className = "table-scroll";
+        const tbl = document.createElement("table");
+        tbl.className = "leg-table";
+
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        ["Time", "Pos (nm)", "Wind (kt)", "Dir", "vs hdg", "Point of sail", "Gust (kt)"].forEach(h => {
+          const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+        });
+        thead.appendChild(hr); tbl.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        const totalHours = Math.ceil(etaH) + 1;
+
+        // Build time index for the departure date
+        const depDateStr = depDate + "T" + String(depHour).padStart(2,"0") + ":00";
+
+        for (let h = 0; h <= Math.ceil(etaH); h++) {
+          const distCovered = Math.min(speed * h, distNm);
+          const frac = distNm > 0 ? distCovered / distNm : 0;
+          const wpIdx = Math.round(frac * (N-1));
+          const hData = wpData[wpIdx]?.hourly;
+          if (!hData) continue;
+
+          // Find the right hour in the time series
+          const localH = (depHour + h) % 24;
+          const daysAhead = Math.floor((depHour + h) / 24);
+          const targetDate = new Date(depDate + "T00:00:00");
+          targetDate.setDate(targetDate.getDate() + daysAhead);
+          const targetStr = targetDate.toISOString().slice(0,10) + "T" + String(localH).padStart(2,"0") + ":00";
+
+          const tIdx = hData.time.indexOf(targetStr);
+          if (tIdx === -1) continue;
+
+          const wspd = hData.windspeed_10m[tIdx];
+          const wdir = hData.winddirection_10m[tIdx];
+          const gust = hData.windgusts_10m[tIdx];
+
+          const angle  = windAngleDeg(wdir, bearing);
+          const side   = windSide(wdir, bearing);
+          const pos    = pointOfSail(angle);
+          const timeStr = String(localH).padStart(2,"0") + ":00";
+          const distStr = Math.round(distCovered) + " nm";
+
+          const row = document.createElement("tr");
+          if (wspd !== null) row.className = rowClass(wspd);
+
+          const cells = [
+            {text: timeStr},
+            {text: distStr},
+            {text: wspd !== null ? Math.round(wspd) : "–", cls: "mono"},
+            {text: wdir !== null ? deg_to_compass_js(wdir) : "–"},
+            {text: angle + "° " + side, cls: "mono"},
+            {text: pos.label, cls: pos.cls},
+            {text: gust !== null ? Math.round(gust) : "–", cls: "mono"},
+          ];
+          cells.forEach(({text, cls}) => {
+            const td = document.createElement("td");
+            td.textContent = text;
+            if (cls) td.className = cls;
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        }
+        tbl.appendChild(tbody);
+        scroll.appendChild(tbl);
+        results.appendChild(scroll);
+
+        const note = document.createElement("p");
+        note.className = "leg-summary";
+        note.style.marginTop = "8px";
+        note.textContent = "Wind at each waypoint along the rhumb line · GFS hourly · Red >25 kt, amber 18–25 kt";
+        results.appendChild(note);
+
+      } catch (e) {
+        results.innerHTML = `<p class="leg-error">Fetch failed: ${e.message}</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Plan passage";
+      }
+    });
+
+    return card;
+  }
+
+  // Compass helper for client-side use (mirrors Python's deg_to_compass)
+  function deg_to_compass_js(d) {
+    if (d === null || d === undefined) return "–";
+    return ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(((d%360)+360)%360 / 22.5) % 16];
+  }
+
   function buildConvectionCard() {
     const conv = DATA.convection;
     const dates = DATA.dates.filter(d => conv[d]);
@@ -1268,11 +1575,12 @@ __COASTLINE_DATA_JSON__
         s.className = "conv-flag"; s.textContent = label; return s;
       };
 
+      const sstStr = c.sst !== null ? String(c.sst) + (c.sstCarriedForward ? " †" : "") : "–";
       const cells = [
         dateLabel(d, d === DATA.dates[0]),
         c.cape !== null ? String(c.cape) : "–",
         c.t850 !== null ? String(c.t850) : "–",
-        c.sst !== null ? String(c.sst) : "–",
+        sstStr,
         c.delta !== null ? String(c.delta) : "–",
       ];
       cells.forEach((val, i) => {
@@ -1293,9 +1601,11 @@ __COASTLINE_DATA_JSON__
 
     const note = document.createElement("p");
     note.className = "conv-note";
-    note.textContent = "CAPE > 500 J/kg = moderate convective potential (squalls, thunderstorms). " +
-      "SST − T850 > 13 °C = cool air over warm sea, elevated waterspout and squall risk (Mediterranean indicator). " +
-      "SST is the last available value carried forward (changes slowly). Single-point, area centroid only.";
+    note.textContent = "CAPE > 500 J/kg = moderate convective potential (squalls, thunderstorms); " +
+      "GFS CAPE has low skill beyond ~5 days — treat it as a rough signal only inside that window. " +
+      "SST − T850 > 13 °C = cool air over warm sea, elevated waterspout and squall risk (standard Med indicator); " +
+      "uses daily-min T850 (coldest air = worst instability) and max CAPE across all spots. " +
+      "SST marked † is carried forward past the marine model horizon — SST changes slowly in autumn so this is reasonable.";
     card.appendChild(note);
 
     return card;
@@ -1434,6 +1744,8 @@ __COASTLINE_DATA_JSON__
       cardsEl.appendChild(buildCard(key, param));
     }
   });
+
+  cardsEl.appendChild(buildLegCard());
 
   // Convection card -- shown only when convection data exists
   if (DATA.convection && Object.keys(DATA.convection).length) {
