@@ -165,6 +165,7 @@ SPOT_LABELS = {s["name"]: {"short": s["short"], "shortMobile": s["short_mobile"]
 # -- optional; an empty string (area.json's default if omitted) just skips
 # that paragraph instead of feeding the model irrelevant Aegean geography.
 LOCAL_KNOWLEDGE = _area.get("local_knowledge", "")
+OFFICIAL_SOURCES = _area.get("official_sources", [])
 
 EXTENDED_RANGE_DAYS = 46
 MEDIUM_RANGE_DAYS = 15
@@ -643,6 +644,61 @@ def fetch_500hpa(dates):
     return out
 
 
+def fetch_convection(dates):
+    """Daily convection indicators for the trip: max CAPE (J/kg), mean 850 hPa
+    temperature (°C), and sea surface temperature (°C, last available value
+    carried forward since marine SST forecast is shorter than medium-range wind).
+    Returns {date_str: {cape, t850, sst, delta}} where delta = SST - T850.
+    Thresholds: CAPE > 500 J/kg = moderate convective potential; delta > 13°C =
+    elevated waterspout / squall risk for the Mediterranean."""
+    coords = list(SPOTS.values())
+    clat = round(sum(c[0] for c in coords) / len(coords), 2)
+    clon = round(sum(c[1] for c in coords) / len(coords), 2)
+    out = {}
+    try:
+        r1 = fetch("https://api.open-meteo.com/v1/forecast", {
+            "latitude": clat, "longitude": clon,
+            "daily": "cape_max",
+            "hourly": "temperature_850hPa",
+            "models": "gfs_seamless",
+            "forecast_days": MEDIUM_RANGE_DAYS,
+            "timezone": TRIP_TZ.key,
+            "cell_selection": CELL_SELECTION,
+        })
+        cape_daily = dict(zip(r1["daily"]["time"], r1["daily"]["cape_max"]))
+        t850_hourly = list(zip(r1["hourly"]["time"], r1["hourly"]["temperature_850hPa"]))
+    except Exception as e:
+        print(f"Convection CAPE/T850 fetch skipped: {e}", file=sys.stderr)
+        return {}
+
+    sst_last = None
+    try:
+        r2 = fetch("https://marine-api.open-meteo.com/v1/marine", {
+            "latitude": clat, "longitude": clon,
+            "hourly": "sea_surface_temperature",
+            "forecast_days": MEDIUM_RANGE_DAYS,
+            "timezone": TRIP_TZ.key,
+        })
+        sst_vals = [(t, v) for t, v in zip(r2["hourly"]["time"],
+                                            r2["hourly"]["sea_surface_temperature"])
+                    if v is not None]
+        if sst_vals:
+            sst_last = sst_vals[-1][1]  # last available, carried forward
+    except Exception as e:
+        print(f"Convection SST fetch skipped: {e}", file=sys.stderr)
+
+    date_set = {d.isoformat() if hasattr(d, "isoformat") else d for d in dates}
+    for date in date_set:
+        cape = cape_daily.get(date)
+        t850_day = [v for t, v in t850_hourly if t.startswith(date) and v is not None]
+        t850 = round(sum(t850_day) / len(t850_day), 1) if t850_day else None
+        sst = round(sst_last, 1) if sst_last is not None else None
+        delta = round(sst - t850, 1) if sst is not None and t850 is not None else None
+        out[date] = {"cape": round(cape) if cape is not None else None,
+                     "t850": t850, "sst": sst, "delta": delta}
+    return out
+
+
 def sea_state(lat, lon):
     """One HTTP call for all 9 points of the 3x3 kernel around (lat, lon) --
     same batching as medium_range(). Marine has no per-model consensus step
@@ -1074,7 +1130,7 @@ def placeholder_block(label, unit, opens_note):
 
 # ------------------------------------------------------- LLM sailing summary --
 
-def summary_data_table(wind_records, sea_records, upper=None):
+def summary_data_table(wind_records, sea_records, upper=None, convection=None):
     """Plain-text tables the model reads as its only source of truth: the
     full wind/temp/rain table (with the model-disagreement flag column),
     a per-model breakdown on any day models disagreed, sea state when
@@ -1118,10 +1174,19 @@ def summary_data_table(wind_records, sea_records, upper=None):
             u = upper[day]
             lines.append(f"{day},{u['z500']},{u['t500']},{u['ws500']},{u['wd500']}")
 
+    if convection:
+        lines.append("")
+        lines.append("Convection / squall / waterspout risk, area centroid (GFS + Open-Meteo Marine):")
+        lines.append("date,cape_max_jkg,t850_mean_c,sst_c,sst_minus_t850_c")
+        lines.append("  (CAPE>500 J/kg = moderate convective potential; SST-T850>13°C = elevated Med waterspout risk)")
+        for day in sorted(convection):
+            c = convection[day]
+            lines.append(f"{day},{c['cape']},{c['t850']},{c['sst']},{c['delta']}")
+
     return "\n".join(lines)
 
 
-def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper=None):
+def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper=None, convection=None):
     """Ask Claude (SAILING_SUMMARY_MODEL) to turn this run's data into a
     sailing-focused narrative. Returns None (never raises) if the API key
     isn't set up or the call fails, so the rest of the pipeline is
@@ -1202,6 +1267,18 @@ far out, not a day-by-day forecast -- the ensemble mean smooths out individual f
                               "in the patch, not just the exact point), period/direction are the kernel "
                               "mean. There's no further models-consensus step on top since Marine is a "
                               "single model, unlike the wind figures' three-model combine.")
+    if convection:
+        data_methodology += ("\n\nConvection / squall / waterspout risk indicators (GFS + Marine, central "
+                              "Aegean daily) are appended to the data table: cape_max_jkg is the daily "
+                              "maximum CAPE (Convective Available Potential Energy) -- values above 500 J/kg "
+                              "indicate moderate convective potential (risk of thunderstorms, squalls, or "
+                              "waterspouts); above 1000 J/kg is significant. sst_c is the sea surface "
+                              "temperature (last available from the marine model, carried forward since SST "
+                              "changes slowly). sst_minus_t850_c is the key stability indicator for the "
+                              "Mediterranean: when it exceeds 13°C, cool air sits over a warm sea, favouring "
+                              "convective instability, waterspouts, and gusty squalls -- a well-known hazard "
+                              "in the autumn Mediterranean. Report on any elevated squall or waterspout "
+                              "risk explicitly, citing the specific dates and CAPE / SST-T850 values.")
     if upper:
         data_methodology += ("\n\n500 hPa upper-atmosphere context (GFS daily mean for central Aegean) is "
                               "appended to the data table. z500_m is geopotential height: values above "
@@ -1234,7 +1311,7 @@ the wind/temp/rain figures below: {wind_source_label}.
 {data_methodology}
 {local_knowledge_section}
 DATA:
-{summary_data_table(wind_records, sea_records, upper)}
+{summary_data_table(wind_records, sea_records, upper, convection)}
 {previous_section}
 
 Write a thorough (500-700 word) sailing briefing in flowing prose, organized as a few clearly \
@@ -1272,7 +1349,7 @@ present in it."""
     return text.strip() or None
 
 
-def generate_disagreement_notes(wind_records, upper=None):
+def generate_disagreement_notes(wind_records, upper=None, convection=None):
     """Call Claude once with all flagged spot/date pairs and return a dict
     keyed by 'spot|||date' with a 1-3 sentence explanation of what the model
     disagreement means in practice. Returns {} if no flagged records, no API
@@ -1317,18 +1394,27 @@ def generate_disagreement_notes(wind_records, upper=None):
             + "\n".join(upper_lines)
         )
 
+    conv_section = ""
+    if convection:
+        conv_lines = ["date,cape_max_jkg,t850_c,sst_c,sst_minus_t850_c"]
+        for day in sorted(convection):
+            c = convection[day]
+            conv_lines.append(f"{day},{c['cape']},{c['t850']},{c['sst']},{c['delta']}")
+        conv_section = ("\n\nConvection indicators (CAPE>500=moderate risk, SST-T850>13°C=waterspout risk):\n"
+                        + "\n".join(conv_lines))
+
     prompt = f"""You are a sailing weather analyst. For each row in the table below, write exactly \
 1-3 plain-English sentences (no markdown) explaining what the model disagreement means in practice \
-for a sailor -- what the models are actually split on, what the upper-atmosphere context suggests \
-about which scenario is more likely, and the practical consequence (e.g. "could be a light day or \
-a rough one"). When the 500 hPa data is available for that date, use it to add synoptic context.
+for a sailor -- what the models are actually split on, what the upper-atmosphere and convection context \
+suggests about which scenario is more likely, and the practical consequence. Use 500 hPa and CAPE data \
+when available for that date.
 
 Use only what is in the data. Be specific about the numbers. Do not use markdown. Do not invent \
 anything. Respond ONLY with valid JSON: a single object mapping "spot|||date" keys to the note string.
 Example key format: "Lemnos|||2026-10-03"
 
 Data:
-{table}{upper_section}"""
+{table}{upper_section}{conv_section}"""
 
     try:
         import anthropic
@@ -1448,7 +1534,7 @@ def generate_chart_summaries(charts_meta):
 
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
                              sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
-                             tiers, sailing_summary, upper=None):
+                             tiers, sailing_summary, upper=None, convection=None):
     dates = all_dates()
     params = {}
 
@@ -1460,7 +1546,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         ("temp_lo", "Temp (low)", "°C", 0),
         ("temp_hi", "Temp (high)", "°C", 0),
     ]
-    disagree_notes = generate_disagreement_notes(wind_records, upper) if wind_records else {}
+    disagree_notes = generate_disagreement_notes(wind_records, upper, convection) if wind_records else {}
 
     for key, label, unit, decimals in wind_specs:
         if wind_records:
@@ -1637,6 +1723,8 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         "spreadWindKt": SPREAD_WIND_KT, "spreadDirDeg": SPREAD_DIR_DEG,
         "dirFlagMinWindKt": DIR_FLAG_MIN_WIND_KT,
         "charts": charts_meta,
+        "convection": convection or {},
+        "officialSources": OFFICIAL_SOURCES,
     }
 
 
@@ -1907,6 +1995,7 @@ def main():
 
     print()
     upper = None
+    convection = None
     if wind_records:
         print("Fetching 500 hPa upper-atmosphere data (GFS)...")
         upper = fetch_500hpa(all_dates())
@@ -1916,7 +2005,18 @@ def main():
         else:
             print("  (no 500 hPa data for trip dates yet)")
 
-    sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper)
+        print("Fetching convection indicators (CAPE, T850, SST)...")
+        convection = fetch_convection(all_dates())
+        if convection:
+            flagged = [d for d, c in convection.items()
+                       if (c["cape"] or 0) > 500 or (c["delta"] or 0) > 13]
+            print(f"  Got convection data for {len(convection)} days"
+                  + (f"; elevated risk days: {', '.join(flagged)}" if flagged else ""))
+        else:
+            print("  (no convection data)")
+
+    sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records,
+                                               previous_run_csv, upper, convection)
     if sailing_summary:
         print(f"##### Sailing summary ({SAILING_SUMMARY_MODEL}, read the numbers above too) #####")
         print(sailing_summary)
@@ -1929,7 +2029,7 @@ def main():
         sea_opens_note=f"Sea state opens ~{medium_available} — rerun the forecast script closer to the trip",
         poseidon_records=poseidon_records,
         poseidon_opens_note="HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip",
-        tiers=tiers, sailing_summary=sailing_summary, upper=upper,
+        tiers=tiers, sailing_summary=sailing_summary, upper=upper, convection=convection,
     )
     write_dashboard(payload)
     print(f"\nDashboard written to {DASHBOARD_OUT}")

@@ -106,6 +106,19 @@
   // exist in.
   "local_knowledge": "",
 
+  // ---- Official forecast sources for the "Before you go" footer ---------------
+  // List of {label, url} for authoritative sources a sailor should check before
+  // departing. Rendered as links in the footer. Plain text entries (no url field)
+  // appear as non-linked notes (e.g. Navtex / VHF details). Leave empty [] to
+  // omit the section entirely.
+  "official_sources": [
+    {"label": "HNMS (EMY) maritime forecast",  "url": "https://www.emy.gr/emy/en/maritime/maritime_fore"},
+    {"label": "EMY weather warnings",           "url": "https://www.emy.gr/emy/en/maritime/meteoalarm"},
+    {"label": "meteo.gr Aegean",                "url": "https://www.meteo.gr/cf-international.cfm?city_id=32"},
+    {"label": "Navtex 518 kHz — Iraklion (J) / Athens (H)"},
+    {"label": "VHF Ch 16 → Ch 25/26 (Greek coastguard weather)"}
+  ],
+
   // ---- Spots ------------------------------------------------------------------
   // The places this pipeline tracks, each with lat/lon plus explicit
   // "short"/"short_mobile" labels -- shown in table headers, the legend,

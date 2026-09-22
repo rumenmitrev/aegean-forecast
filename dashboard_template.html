@@ -214,6 +214,22 @@
   .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
   .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
 
+  /* Convection / instability card */
+  .conv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .conv-table th { text-align: left; color: var(--ink-muted); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+  .conv-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--gridline); color: var(--ink-primary);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .conv-table td:first-child { font-family: inherit; color: var(--ink-secondary); }
+  .conv-flag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600;
+    background: rgba(230,126,34,0.14); color: #c0631a; border: 1px solid rgba(230,126,34,0.3);
+    border-radius: 4px; padding: 1px 5px; vertical-align: middle; }
+  .conv-note { font-size: 12px; color: var(--ink-muted); margin-top: 8px; line-height: 1.5; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .conv-flag { color: #e8a162; background: rgba(230,126,34,0.10); }
+  }
+  :root[data-theme="dark"] .conv-flag { color: #e8a162; background: rgba(230,126,34,0.10); }
+
   /* Synoptic charts card */
   .chart-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
   .chart-tabs button {
@@ -450,17 +466,9 @@
     spots simply have no wave data (a masked/land grid cell in HCMR's model, shown as &ldquo;&ndash;&rdquo;
     rather than a real reading).</p>
 
-    <p><b>Before you go &mdash; official sources:</b> this tool helps you understand the picture;
-    these decide whether you depart.
-    <a href="https://www.emy.gr/emy/en/maritime/maritime_fore" target="_blank" rel="noopener">HNMS&nbsp;(EMY) maritime forecast</a>
-    &middot;
-    <a href="https://www.emy.gr/emy/en/maritime/meteoalarm" target="_blank" rel="noopener">EMY weather warnings</a>
-    &middot;
-    <a href="https://www.meteo.gr/cf-international.cfm?city_id=32" target="_blank" rel="noopener">meteo.gr Aegean</a>
-    &middot;
-    Navtex (518&nbsp;kHz, Iraklion&nbsp;J / Athens&nbsp;H)
-    &middot;
-    VHF Ch&nbsp;16 &rarr; Ch&nbsp;25/26 for Greek coastguard weather.</p>
+    <!-- Populated by buildFooterSources() from DATA.officialSources -->
+    <p id="official-sources-p" hidden><b>Before you go &mdash; official sources:</b> this tool helps you
+    understand the picture; these decide whether you depart. <span id="official-sources-list"></span></p>
   </footer>
 
 </div>
@@ -607,10 +615,25 @@ __COASTLINE_DATA_JSON__
     document.querySelector(".sw").textContent = `${DATA.spreadWindKt}kt`;
     document.querySelector(".sd").textContent = `${DATA.spreadDirDeg}°`;
     document.querySelector(".dw").textContent = `${DATA.dirFlagMinWindKt}kt`;
-    // "poseidon_wind" (or any tier-5 key) only exists in DATA.params when
-    // area.json's poseidon_enabled is true -- hide the paragraph describing
-    // a Greece-specific tier entirely for an area that could never have it.
     document.getElementById("poseidon-footer").hidden = !DATA.params.poseidon_wind;
+    // Official sources from area.json -- rendered dynamically so the template
+    // stays area-agnostic.
+    const sources = DATA.officialSources || [];
+    if (sources.length) {
+      const list = document.getElementById("official-sources-list");
+      sources.forEach((s, i) => {
+        if (i) { const sep = document.createTextNode(" · "); list.appendChild(sep); }
+        if (s.url) {
+          const a = document.createElement("a");
+          a.href = s.url; a.target = "_blank"; a.rel = "noopener";
+          a.textContent = s.label;
+          list.appendChild(a);
+        } else {
+          list.appendChild(document.createTextNode(s.label));
+        }
+      });
+      document.getElementById("official-sources-p").hidden = false;
+    }
   }
 
   function buildSummary() {
@@ -1204,6 +1227,80 @@ __COASTLINE_DATA_JSON__
     return card;
   }
 
+  function buildConvectionCard() {
+    const conv = DATA.convection;
+    const dates = DATA.dates.filter(d => conv[d]);
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = "Convection / squall risk";
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = "GFS + Open-Meteo Marine · area centroid";
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    const tbl = document.createElement("table");
+    tbl.className = "conv-table";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    ["Date", "CAPE (J/kg)", "T850 (°C)", "SST (°C)", "SST−T850", ""].forEach(h => {
+      const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+    });
+    thead.appendChild(hr); tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    dates.forEach(d => {
+      const c = conv[d];
+      const row = document.createElement("tr");
+      const capeFlag = c.cape !== null && c.cape > 500;
+      const deltaFlag = c.delta !== null && c.delta > 13;
+      const flagEl = (label) => {
+        const s = document.createElement("span");
+        s.className = "conv-flag"; s.textContent = label; return s;
+      };
+
+      const cells = [
+        dateLabel(d, d === DATA.dates[0]),
+        c.cape !== null ? String(c.cape) : "–",
+        c.t850 !== null ? String(c.t850) : "–",
+        c.sst !== null ? String(c.sst) : "–",
+        c.delta !== null ? String(c.delta) : "–",
+      ];
+      cells.forEach((val, i) => {
+        const td = document.createElement("td"); td.textContent = val; row.appendChild(td);
+      });
+      const flagTd = document.createElement("td");
+      if (capeFlag) flagTd.appendChild(flagEl("CAPE"));
+      if (deltaFlag) flagTd.appendChild(flagEl("SST−T850"));
+      row.appendChild(flagTd);
+      tbody.appendChild(row);
+    });
+    tbl.appendChild(tbody);
+
+    const scroll = document.createElement("div");
+    scroll.className = "table-scroll";
+    scroll.appendChild(tbl);
+    card.appendChild(scroll);
+
+    const note = document.createElement("p");
+    note.className = "conv-note";
+    note.textContent = "CAPE > 500 J/kg = moderate convective potential (squalls, thunderstorms). " +
+      "SST − T850 > 13 °C = cool air over warm sea, elevated waterspout and squall risk (Mediterranean indicator). " +
+      "SST is the last available value carried forward (changes slowly). Single-point, area centroid only.";
+    card.appendChild(note);
+
+    return card;
+  }
+
   function buildChartsCard() {
     const charts = DATA.charts || [];
     const card = document.createElement("div");
@@ -1337,6 +1434,11 @@ __COASTLINE_DATA_JSON__
       cardsEl.appendChild(buildCard(key, param));
     }
   });
+
+  // Convection card -- shown only when convection data exists
+  if (DATA.convection && Object.keys(DATA.convection).length) {
+    cardsEl.appendChild(buildConvectionCard());
+  }
 
   cardsEl.appendChild(buildChartsCard());
 
