@@ -416,7 +416,9 @@ def extract_poseidon_records(name, wind_data, wave_data):
     for date in sorted(by_day):
         wind_vals, wave_vals = by_day[date]["wind"], by_day[date]["wave"]
         speeds_kt = [v["w10"] * POSEIDON_MS_TO_KT for v in wind_vals if v.get("w10") is not None]
-        dirs = [v["wangle"] % 360 for v in wind_vals if v.get("wangle") is not None]
+        # wangle is the direction the wind blows TO; convert to FROM (meteorological
+        # standard) by adding 180°, confirmed by cross-check with Open-Meteo GFS.
+        dirs = [(v["wangle"] + 180) % 360 for v in wind_vals if v.get("wangle") is not None]
         rains = [v["rain"] for v in wind_vals if v.get("rain") is not None]
         temps = [v["t2m"] for v in wind_vals if v.get("t2m") is not None]
         waves = [v["wht"] for v in wave_vals if v.get("wht") is not None]
@@ -424,7 +426,8 @@ def extract_poseidon_records(name, wind_data, wave_data):
         # masked/land wave cell (wht is None) still reports a wangle value
         # (observed: a uniform 0 rather than -999), which would otherwise
         # read as a real "due north" direction for a wave that doesn't exist.
-        wave_dirs = [v["wangle"] % 360 for v in wave_vals if v.get("wht") is not None and v.get("wangle") is not None]
+        # WW3 wangle is also propagation direction (TO); convert to FROM for consistency.
+        wave_dirs = [(v["wangle"] + 180) % 360 for v in wave_vals if v.get("wht") is not None and v.get("wangle") is not None]
 
         out.append({
             "spot": name, "date": date.isoformat(),
