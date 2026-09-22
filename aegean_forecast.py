@@ -694,8 +694,9 @@ def fetch_convection(dates):
         return {}
 
     # SST: single central point is fine (varies little over 150 km in autumn).
-    sst_last = None
-    sst_last_date = None
+    # SST: daily mean where the marine model has data, last available value
+    # carried forward for dates beyond that horizon (changes slowly in autumn).
+    sst_by_date = {}   # date -> (value, is_carried_forward)
     try:
         coords = list(SPOTS.values())
         clat = round(sum(c[0] for c in coords) / len(coords), 2)
@@ -707,12 +708,25 @@ def fetch_convection(dates):
             "timezone": TRIP_TZ.key,
             "cell_selection": CELL_SELECTION,
         })
-        sst_pairs = [(t, v) for t, v in zip(r2["hourly"]["time"],
-                                              r2["hourly"]["sea_surface_temperature"])
-                     if v is not None]
-        if sst_pairs:
-            sst_last_date = sst_pairs[-1][0][:10]
-            sst_last = sst_pairs[-1][1]
+        # Build daily means from hourly data
+        day_vals: dict = {}
+        sst_last = sst_last_date = None
+        for t, v in zip(r2["hourly"]["time"], r2["hourly"]["sea_surface_temperature"]):
+            if v is None:
+                continue
+            day = t[:10]
+            day_vals.setdefault(day, []).append(v)
+            if sst_last_date is None or day >= sst_last_date:
+                sst_last_date = day
+                sst_last = v  # keep updating; last non-None is carry-forward value
+        for day, vals in day_vals.items():
+            sst_by_date[day] = (round(sum(vals) / len(vals), 1), False)
+        # Fill trip dates beyond marine horizon using carry-forward
+        date_set_temp = {d.isoformat() if hasattr(d, "isoformat") else d for d in dates}
+        if sst_last is not None:
+            for date in date_set_temp:
+                if date not in sst_by_date:
+                    sst_by_date[date] = (round(sst_last, 1), True)
     except Exception as e:
         print(f"Convection SST fetch skipped: {e}", file=sys.stderr)
 
@@ -722,13 +736,14 @@ def fetch_convection(dates):
         t850 = t850_min_by_date.get(date)
         if t850 is not None:
             t850 = round(t850, 1)
-        sst = round(sst_last, 1) if sst_last is not None else None
-        sst_cf = sst is not None and (sst_last_date is None or date > sst_last_date)
+        sst_entry = sst_by_date.get(date)
+        sst = sst_entry[0] if sst_entry else None
+        sst_cf = sst_entry[1] if sst_entry else False
         delta = round(sst - t850, 1) if sst is not None and t850 is not None else None
         out[date] = {
             "cape": round(cape) if cape is not None else None,
             "t850": t850, "sst": sst,
-            "sstCarriedForward": sst_cf,  # True when SST is extrapolated past marine horizon
+            "sstCarriedForward": sst_cf,
             "delta": delta,
         }
     return out
@@ -1221,7 +1236,41 @@ def summary_data_table(wind_records, sea_records, upper=None, convection=None):
     return "\n".join(lines)
 
 
-def generate_card_summaries(wind_records, sea_records, upper, convection):
+def build_methodology_text(wind_source_label, sea_records, upper, convection):
+    """Single place that builds the data-methodology paragraph given to every
+    Claude prompt so all AI outputs reason from the same set of facts."""
+    if wind_source_label and wind_source_label.startswith("Medium-range"):
+        ns_km, ew_km = kernel_span_km()
+        text = (f"How these numbers were produced: each of the models ({MEDIUM_MODELS_LABEL}) "
+                f"is sampled over a 3x3 grid (~{ns_km:.0f}x{ew_km:.0f}km) around every spot -- "
+                "mean for wind/temp/rain/direction, max for gust (worst cell). Models then combined "
+                "the same way on top: mean for wind/temp/rain/direction, max for gust. Gust is "
+                "deliberately the worst-case ceiling, not a typical condition; compare it to "
+                f"wind_max, not wind_mean. model_flag marks disagreement > {SPREAD_WIND_KT}kt (wind) "
+                f"or > {SPREAD_DIR_DEG}° (direction). The source column: 'medium' = kernel/consensus "
+                "data as above; 'ec46' = EC46 ensemble-mean fill-in for dates beyond the medium-range "
+                "horizon -- treat as smoothed regime tendency, not a day-by-day forecast; a falling "
+                "mean late in the week is ensemble smoothing, not a guaranteed calming trend.")
+    elif wind_source_label and wind_source_label.startswith("EC46"):
+        text = ("How these numbers were produced: ECMWF EC46 51-member ensemble mean at ~36km -- "
+                "smoothed regime tendency, not a day-by-day forecast. Individual fronts are averaged out.")
+    else:
+        text = ""
+    if sea_records:
+        text += (" Wave height is significant wave height (Hs, average of top 1/3 of waves); "
+                 "kernel max across the grid (worst cell). Largest individual wave ~1.5-2x Hs. "
+                 "Period matters: steep seas (Hs/1.56T²>0.04) are disproportionately uncomfortable.")
+    if upper:
+        text += (f" 500 hPa: z500>5850m=ridge/stable, <5700m=trough. "
+                 "t500<-20°C=cold pool/instability for Oct Aegean (-10 to -15°C is normal background).")
+    if convection:
+        text += (" Convection: CAPE>500 J/kg=moderate convective potential (low skill beyond ~5 days). "
+                 "SST-T850>13°C=cool air over warm sea, elevated Med waterspout/squall risk. "
+                 "SST marked † is carried forward past the marine model horizon (changes slowly).")
+    return text
+
+
+def generate_card_summaries(wind_records, wind_source_label, sea_records, upper, convection):
     """One Claude call that returns a JSON object with a 2-3 sentence plain-
     English summary for each meaningful dashboard card.  Skips gracefully on
     no API key or error.  Returns {} on failure."""
@@ -1233,21 +1282,27 @@ def generate_card_summaries(wind_records, sea_records, upper, convection):
     if not api_key:
         return {}
 
+    methodology = build_methodology_text(wind_source_label, sea_records, upper, convection)
     data_table = summary_data_table(wind_records, sea_records, upper, convection)
 
-    prompt = f"""You are a sailing weather analyst. The data below covers {TRIP_START} to {TRIP_END}.
+    prompt = f"""You are a sailing weather analyst. The data covers {TRIP_START} to {TRIP_END}.
 
+{methodology}
+
+DATA:
 {data_table}
 
-Write a short (2-3 sentences, plain prose, no markdown) summary for each of these cards.
-Be specific: cite dates, spot names, and numbers from the data. Do not invent anything.
+Write a short (2-3 sentences, plain prose, no markdown) summary for each card below.
+Be specific: cite dates, spot names and numbers. Do not invent anything. Apply the \
+methodology above when interpreting numbers (ec46 rows are smoothed, gust is worst-case, \
+CAPE is low-skill beyond 5 days, SST† is carried forward).
 
-Cards to summarise:
-- wind_mean: What does the week's wind regime look like? Which days and spots stand out?
-- wind_max: What are the peak sustained wind periods? How do they compare to the gusts?
-- gust: What is the gust ceiling and when/where does it peak?
-- wave: What is the sea state picture across the trip?
-- convection: What is the squall and waterspout risk based on CAPE and SST-T850?
+Cards:
+- wind_mean: Week's wind regime -- which days/spots stand out?
+- wind_max: Peak sustained wind periods and how they compare to gusts.
+- gust: The gust ceiling -- when and where does it peak, and what does it imply?
+- wave: Sea state picture across the trip (use Hs interpretation from methodology).
+- convection: Squall/waterspout risk from CAPE and SST-T850 -- cite the threshold values.
 
 Respond ONLY with valid JSON mapping card key → summary string. Example:
 {{"wind_mean": "...", "gust": "...", "wave": "...", "convection": "...", "wind_max": "..."}}"""
@@ -1315,65 +1370,9 @@ PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS})
     local_knowledge_section = f"\n{LOCAL_KNOWLEDGE}\n" if LOCAL_KNOWLEDGE else ""
 
     # Tells the model what it's actually looking at, so it reasons about
-    # model_flag/gust correctly instead of assuming a plain single-point
-    # forecast. Branches on wind_source_label since EC46 and the medium-range
-    # consensus are fetched and combined completely differently.
-    if wind_source_label.startswith("Medium-range"):
-        ns_km, ew_km = kernel_span_km()
-        data_methodology = f"""How the wind/temp/rain/gust figures below were produced: each of the \
-models ({MEDIUM_MODELS_LABEL}) is sampled over a 3x3 grid of points (~{ns_km:.0f}x{ew_km:.0f}km) around \
-every spot, not one exact GPS point -- reflecting the patch of sea a boat sailing that spot actually \
-moves through. Wind speed, temperature, rain, and direction are each model's mean across those 9 \
-points; gust is each model's max across those 9 points instead of a mean, since gust is inherently a \
-worst-case figure and averaging it away would hide a real local peak (e.g. a gap-wind gust one grid \
-cell over). The models' results are then combined the same way on top of that: mean for \
-wind/temp/rain/direction, max for gust -- so the gust figure shown is deliberately the strongest plausible \
-gust anywhere in that patch across all models, a safety margin rather than a literal single-point \
-prediction. model_flag marks a day where the models disagree by more than {SPREAD_WIND_KT}kt (wind) or \
-{SPREAD_DIR_DEG} degrees (direction, only counted when wind is at least {DIR_FLAG_MIN_WIND_KT}kt) -- treat \
-those days' numbers as less certain; the per-model breakdown further down gives the actual spread. \
-The data table has a 'source' column: 'medium' = kernel/consensus data as above; 'ec46' = EC46 ensemble \
-mean fill-in for dates beyond the medium-range horizon (treat as regime tendency, not a day-by-day forecast \
--- the falling mean late in the week is a sign of uncertainty smoothing, not necessarily a calming trend). \
-For gusts: compare the gust column against wind_max (ratio ~1.3-1.5 for open sea is normal), not wind_mean \
--- wind_mean averages 24 hours while gust is the single worst moment from the worst cell and model."""
-    elif wind_source_label.startswith("EC46"):
-        data_methodology = """How the wind/temp/rain figures below were produced: this is ECMWF's own \
-EC46 sub-seasonal 51-member ensemble mean at ~36km resolution -- a single number per spot/day, already \
-averaged by ECMWF, with no per-model breakdown or model_flag at this range (that only exists once the \
-medium-range consensus tier takes over closer to the trip). Read it as the week's regime/tendency this \
-far out, not a day-by-day forecast -- the ensemble mean smooths out individual fronts."""
-    else:
-        data_methodology = ""
-    if sea_records:
-        data_methodology += ("\n\nSea state (wave height/period/direction) comes from a single model "
-                              "(Open-Meteo Marine), sampled over the same 3x3 kernel as wind: wave height "
-                              "is the kernel max (same worst-case reasoning as gust -- the roughest cell "
-                              "in the patch, not just the exact point), period/direction are the kernel "
-                              "mean. There's no further models-consensus step on top since Marine is a "
-                              "single model, unlike the wind figures' three-model combine.")
-    if convection:
-        data_methodology += ("\n\nConvection / squall / waterspout risk indicators (GFS + Marine, central "
-                              "Aegean daily) are appended to the data table: cape_max_jkg is the daily "
-                              "maximum CAPE (Convective Available Potential Energy) -- values above 500 J/kg "
-                              "indicate moderate convective potential (risk of thunderstorms, squalls, or "
-                              "waterspouts); above 1000 J/kg is significant. sst_c is the sea surface "
-                              "temperature (last available from the marine model, carried forward since SST "
-                              "changes slowly). sst_minus_t850_c is the key stability indicator for the "
-                              "Mediterranean: when it exceeds 13°C, cool air sits over a warm sea, favouring "
-                              "convective instability, waterspouts, and gusty squalls -- a well-known hazard "
-                              "in the autumn Mediterranean. Report on any elevated squall or waterspout "
-                              "risk explicitly, citing the specific dates and CAPE / SST-T850 values.")
-    if upper:
-        data_methodology += ("\n\n500 hPa upper-atmosphere context (GFS daily mean for central Aegean) is "
-                              "appended to the data table. z500_m is geopotential height: values above "
-                              "~5850m indicate a ridge (blocking high, stable surface weather), below "
-                              "~5700m indicate a trough or cutoff low (disturbed, changeable). t500_c is "
-                              "500 hPa temperature: for October Aegean, colder than -20°C signals a "
-                              "genuine cold pool (instability, convection/squall risk); -10 to -15°C is "
-                              "normal background and not itself a sign of instability. wind500_kt and "
-                              "flow500_dir show the steering-level jet direction. Use this to explain the "
-                              "large-scale pattern behind surface wind forecasts and model disagreements.")
+    # Use the shared methodology builder so all AI outputs reason from the
+    # same set of facts (gust is worst-case, ec46 is smoothed, etc.).
+    data_methodology = build_methodology_text(wind_source_label, sea_records, upper, convection)
 
     topics = [
         "The overall wind regime for the week -- direction, typical strength, how steady vs. variable.",
@@ -2105,7 +2104,7 @@ def main():
             print("  (no convection data)")
 
     print("Generating per-card summaries...")
-    card_summaries = generate_card_summaries(wind_records, sea_records, upper, convection)
+    card_summaries = generate_card_summaries(wind_records, wind_source_label, sea_records, upper, convection)
     if card_summaries:
         print(f"  Got summaries for: {', '.join(card_summaries.keys())}")
 
