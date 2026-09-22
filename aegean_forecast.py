@@ -497,7 +497,7 @@ def angular_diff(a, b):
     return abs((a - b + 180) % 360 - 180)
 
 
-def circular_mean_deg(values, min_r=0.5):
+def circular_mean_deg(values, min_r=0.15):
     """Circular mean of bearings. Returns None when the resultant vector is
     too short (min_r < 1.0), meaning the directions are too scattered to
     summarise as a single bearing -- e.g. NE+SW. Caller should render None
@@ -793,7 +793,10 @@ def extract_medium_records(name, cells):
             flags.append("dir")
 
         max_dir_diff = max((x for x in dir_diffs if x is not None), default=None)
-        dir_mean = circular_mean_deg(dirs)
+        # Strict min_r=0.5 here only: we want VAR when the models disagree on
+        # direction, not as a default for per-model kernel averages, Poseidon
+        # daily means, or the 500 hPa flow (all use the default 0.15).
+        dir_mean = circular_mean_deg(dirs, min_r=0.5)
         out.append({
             "spot": name, "date": day, "source": "medium",
             "wind_mean": mean([v["wind_mean"] for v in per_model.values()]),
@@ -1094,7 +1097,8 @@ def summary_data_table(wind_records, sea_records, upper=None):
         lines.append("")
         lines.append("place,date,wave_height_m,wave_period_s,wave_dir")
         for r in sea_records:
-            lines.append(f"{r['spot']},{r['date']},{r.get('wave')},{r.get('period')},{r.get('dir')}")
+            wave_dir_str = deg_to_compass(r["dir"]) if r.get("dir") is not None else "-"
+            lines.append(f"{r['spot']},{r['date']},{r.get('wave')},{r.get('period')},{wave_dir_str}")
 
     if upper:
         lines.append("")
