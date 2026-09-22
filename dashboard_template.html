@@ -149,6 +149,39 @@
   }
   .card-title { font-size: 22px; font-weight: 700; line-height: 1.1; margin: 0; }
   .card-unit { color: var(--ink-muted); font-size: 13px; margin-top: 2px; }
+  .card-title-row { display: flex; align-items: baseline; gap: 7px; }
+  .info-btn {
+    flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%;
+    background: none; border: 1.5px solid var(--ink-muted); cursor: pointer;
+    font-size: 10px; font-weight: 700; color: var(--ink-muted); line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: "Public Sans", sans-serif; padding: 0; transition: border-color 80ms, color 80ms;
+  }
+  .info-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .info-popup-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.3);
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .info-popup {
+    background: var(--surface-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; max-width: 440px; width: 100%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.20); position: relative;
+  }
+  .info-popup h3 {
+    font-family: "Barlow Condensed", sans-serif; font-size: 17px; font-weight: 700;
+    margin: 0 28px 10px 0; color: var(--ink-primary);
+  }
+  .info-popup p {
+    font-size: 13.5px; color: var(--ink-secondary); line-height: 1.6; margin: 0;
+  }
+  .info-popup p + p { margin-top: 8px; }
+  .info-popup .ip-close {
+    position: absolute; top: 12px; right: 14px;
+    background: none; border: none; cursor: pointer;
+    font-size: 18px; color: var(--ink-muted); line-height: 1;
+  }
+  .info-popup .ip-close:hover { color: var(--ink-primary); }
   .view-toggle { display: flex; gap: 4px; flex-shrink: 0; }
   .view-toggle button {
     width: 30px; height: 30px; display: grid; place-items: center;
@@ -183,6 +216,10 @@
 
   .range-caption { margin-top: 10px; font-size: 13px; color: var(--ink-secondary); }
   .range-caption b { color: var(--ink-primary); font-weight: 600; }
+  .card-ai-summary {
+    margin-top: 10px; font-size: 13px; color: var(--ink-secondary);
+    line-height: 1.55; padding-top: 10px; border-top: 1px solid var(--border);
+  }
 
   .chart-wrap { position: relative; }
   svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
@@ -388,12 +425,21 @@
      reader has to scroll sideways to read defeats the point on a boat. */
   @media (max-width: 480px) {
     .card { padding: 12px 8px 14px; }
-    /* SHORT_MOBILE 3-letter place codes (see script) never need to wrap, so
-       a plain single-line layout fits without the auto-layout column-width
-       fight that a longer label would force. */
     table.data-table { font-size: 11px; }
     table.data-table th, table.data-table td { padding: 4px 5px; }
     .warn-flag { font-size: 1.1em; }
+    /* Info popup: full-width on phones */
+    .info-popup { padding: 14px 14px; }
+    /* Passage planner: stack controls vertically */
+    .leg-controls { flex-direction: column; align-items: stretch; }
+    .leg-controls label { flex-direction: row; align-items: center; justify-content: space-between; }
+    .leg-controls select, .leg-controls input[type=number] { width: auto; }
+    .leg-plan-btn { width: 100%; }
+    /* Convection table: smaller */
+    .conv-table { font-size: 11.5px; }
+    /* Leg table: smaller */
+    .leg-table { font-size: 11.5px; }
+    .leg-table th, .leg-table td { padding: 4px 5px 4px 0; }
   }
 </style>
 </head>
@@ -743,6 +789,195 @@ __COASTLINE_DATA_JSON__
     });
   }
 
+  // ─── Card help text ────────────────────────────────────────────────────────
+  const CARD_HELP = {
+    wind_mean: {
+      title: "Wind (mean)",
+      paras: [
+        "24-hour mean wind speed averaged across a 30×25 km grid of sea cells and then across the three models. It reflects the day's typical regime, not peak conditions — light nights and calmer mornings pull it down.",
+        "A flagged cell (⚠) means models disagree by more than the configured threshold. The cell shows the actual model spread (e.g. 10–17 kt) instead of the blended mean, which would misrepresent both. Click the cell or the ⚠ for the per-model breakdown and an AI note.",
+        "Read alongside Wind (max) and Gust. A low mean with a high gust often means a gusty but intermittent regime rather than a steady breeze."
+      ]
+    },
+    wind_dir: {
+      title: "Wind direction",
+      paras: [
+        "Dominant wind direction — circular mean across the grid and models for each day.",
+        "A flagged cell (⚠) means models disagree by more than 45° while wind is above the threshold. The cell shows per-model bearings (e.g. NE / SW). VAR means model directions cancel out and no single bearing is meaningful.",
+        "The Predominant row at the bottom is the week-wide circular mean per spot — useful for planning an overall sail plan. Individual days can differ substantially."
+      ]
+    },
+    wind_max: {
+      title: "Wind (max)",
+      paras: [
+        "Daily peak hourly mean wind — the highest 1-hour averaged wind speed in the day. This is not a 3-second gust; it is the strongest sustained period of the day.",
+        "Use this to interpret the gust column. A gust-to-wind-max ratio of 1.3–1.5 is normal for open sea. A ratio much above 1.5 suggests a gusty, convective regime rather than steady gradient wind.",
+        "Wind (mean) averages 24 hours. Wind (max) picks the peak. Gust picks the worst 3-second spike from the worst cell across all models."
+      ]
+    },
+    gust: {
+      title: "Gust (max)",
+      paras: [
+        "Worst-case 3-second peak gust, from the worst moment, in the worst grid cell, from the most aggressive model. A deliberate safety ceiling — it will usually be higher than what you actually experience.",
+        "Compare to Wind (max), not Wind (mean). Gust ÷ Wind (max) ≈ 1.3–1.5 is normal open-sea gustiness. A ratio much higher points to convective or terrain-driven gusts rather than gradient wind.",
+        "Near high islands like Samothrace or Athos, sea cells close to steep terrain can show elevated gusts from orographic effects. The grid already uses sea cells only (cell_selection=sea), but lee turbulence still affects nearby cells."
+      ]
+    },
+    rain: {
+      title: "Rain",
+      paras: [
+        "Daily total rainfall in mm — kernel mean across the grid cells and models.",
+        "Small amounts (< 1 mm) are typical sea spray / model drizzle and rarely meaningful. Values above 5–10 mm on a given day are worth noting as they usually indicate a front or convective activity."
+      ]
+    },
+    temp_lo: {
+      title: "Temp (low)",
+      paras: [
+        "Daily minimum 2-metre air temperature — kernel mean. In the Aegean in early October, typical lows are 18–22 °C.",
+        "Relevant for passage planning (night watches, clothing layers) and as a rough proxy for how cool the air mass is relative to the sea surface."
+      ]
+    },
+    temp_hi: {
+      title: "Temp (high)",
+      paras: [
+        "Daily maximum 2-metre air temperature — kernel mean.",
+        "Relevant for crew comfort and for assessing the sea-surface/air temperature difference. When air cools sharply relative to the warm sea in autumn, convective instability can develop — see the Convection card."
+      ]
+    },
+    wave: {
+      title: "Wave height (Hs)",
+      paras: [
+        "Significant wave height (Hs) — the average of the highest one-third of waves, kernel maximum across the 30×25 km grid. The occasional largest individual wave is roughly 1.5–2× Hs.",
+        "Cells highlighted in amber are steep seas (wave steepness Hs ÷ 1.56T² > 0.04, equivalent to about 1.0 m at 4 s, 1.6 m at 5 s, 2.3 m at 6 s). Steep seas are uncomfortable and potentially dangerous regardless of height alone.",
+        "Single model (Open-Meteo Marine). No multi-model consensus — unlike wind, there is no per-model disagreement flag for sea state."
+      ]
+    },
+    wave_dir: {
+      title: "Wave direction",
+      paras: [
+        "Direction waves come FROM — circular mean across the kernel. When wave direction and wind direction differ significantly, you have cross-seas (swell from a different source), which can be more uncomfortable than a single sea state at the same height.",
+        "Single model (Open-Meteo Marine)."
+      ]
+    },
+    period: {
+      title: "Wave period",
+      paras: [
+        "Dominant wave period in seconds — the period of the most energetic wave component.",
+        "Short periods (3–5 s) at any significant height produce steep, choppy seas. The Thracian Sea and Aegean wind seas typically run 3–6 s, so check the Wave height (Hs) card for the amber steep-sea indicator which combines height and period.",
+        "Long-period swell (8 s+) is associated with distant storms and produces a rolling, more manageable motion even at larger heights."
+      ]
+    },
+    poseidon_wind: {
+      title: "Poseidon Wind (mean)",
+      paras: [
+        "HCMR Poseidon regional model — a short-range (≈5-6 day) wind forecast specific to Greek seas. Single point per spot (no 3×3 kernel). Independent of the medium-range consensus above.",
+        "Useful as a second opinion close to the trip, especially for local channel effects in Greek waters that global models miss.",
+        "Unofficial, undocumented API — can change without notice. No gust field available."
+      ]
+    },
+    poseidon_wind_dir: {
+      title: "Poseidon Wind direction",
+      paras: [
+        "Wind direction from the HCMR Poseidon regional model. Single point, short horizon (≈5-6 days).",
+        "Compare to the medium-range Wind direction card for consistency. Disagreement between Poseidon and the consensus often reflects local channelling effects."
+      ]
+    },
+    poseidon_wind_max: {
+      title: "Poseidon Wind (max)",
+      paras: [
+        "Daily maximum 3-hourly wind sample from Poseidon — the closest available equivalent to Wind (max). Not a 3-second gust; Poseidon does not provide a gust field.",
+        "Use as an independent check on the medium-range Wind (max). Single point, short horizon."
+      ]
+    },
+    poseidon_rain: {
+      title: "Poseidon Rain",
+      paras: [
+        "Daily rainfall total from HCMR Poseidon. Single point, short horizon (≈5-6 days)."
+      ]
+    },
+    poseidon_wave: {
+      title: "Poseidon Wave height",
+      paras: [
+        "Daily maximum wave height from HCMR's WW3 wave model — short-range, single point. No period field is available from this source.",
+        "Some coastal spots return no data (masked cell in HCMR's wave grid, shown as –). The code tries nearby offsets automatically before reporting a gap."
+      ]
+    },
+    poseidon_wave_dir: {
+      title: "Poseidon Wave direction",
+      paras: [
+        "Wave direction (FROM) from HCMR's WW3 model. Short-range, single point per spot."
+      ]
+    },
+    leg: {
+      title: "Passage planner",
+      paras: [
+        "Hourly ECMWF IFS 0.25° wind along the rhumb line between two spots — fetched live from Open-Meteo. Pick departure date, local time (UTC+3) and boat speed in knots.",
+        "The table shows conditions at each hour: how far along the track you are, wind speed and direction, the angle between the wind and your course (0° = dead headwind, 90° = beam, 180° = downwind), the point of sail, and gusts.",
+        "Wind angle and point of sail assume you are heading directly from A to B at a constant speed. Red rows = wind ≥ 25 kt, amber = 18–25 kt. ECMWF IFS covers approximately the next 10 days."
+      ]
+    },
+    convection: {
+      title: "Convection / squall risk",
+      paras: [
+        "Daily indicators for squalls, thunderstorms and waterspouts — worst values across all spots, not a single central point.",
+        "CAPE (Convective Available Potential Energy): > 500 J/kg = moderate convective potential, > 1000 J/kg = significant. Low skill beyond about 5 days — treat it as a rough signal only inside that window.",
+        "SST − T850 is sea surface temperature minus the day's minimum 850 hPa temperature. Above 13 °C means cool air sits over a warm sea — the standard Mediterranean indicator for convective instability, squalls and waterspouts. SST marked † is carried forward past the marine model horizon; SST changes slowly in autumn so the extrapolation is reasonable."
+      ]
+    },
+    charts: {
+      title: "Synoptic charts",
+      paras: [
+        "Official ECMWF pressure charts — MSLP + 850 hPa wind (surface pattern, fronts, lows) and 500 hPa geopotential + 850 hPa temperature (upper-level steering flow). Available from about 9-10 days out.",
+        "Read the pressure contours: tight spacing = strong gradient = stronger wind. A trough extending south into the Aegean drives NE winds; a ridge blocks and calms them. The 500 hPa chart shows whether the upper flow is amplified (strong ridge/trough) or zonal (flat westerlies).",
+        "The AI interpretation below each chart is a starting point. Always read the actual chart yourself before making a departure decision."
+      ]
+    }
+  };
+
+  function showInfoPopup(key) {
+    const help = CARD_HELP[key];
+    if (!help) return;
+
+    const overlay = document.createElement("div");
+    overlay.className = "info-popup-overlay";
+    overlay.addEventListener("click", () => overlay.remove());
+
+    const popup = document.createElement("div");
+    popup.className = "info-popup";
+    popup.addEventListener("click", e => e.stopPropagation());
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "ip-close"; closeBtn.textContent = "×";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.addEventListener("click", () => overlay.remove());
+    popup.appendChild(closeBtn);
+
+    const h3 = document.createElement("h3");
+    h3.textContent = help.title;
+    popup.appendChild(h3);
+
+    help.paras.forEach(text => {
+      const p = document.createElement("p");
+      p.textContent = text;
+      popup.appendChild(p);
+    });
+
+    overlay.appendChild(popup);
+    document.body.appendChild(overlay);
+
+    const onKey = e => { if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", onKey); } };
+    document.addEventListener("keydown", onKey);
+  }
+
+  function makeInfoBtn(key) {
+    const btn = document.createElement("button");
+    btn.className = "info-btn";
+    btn.textContent = "i";
+    btn.setAttribute("aria-label", "What does this card show?");
+    btn.addEventListener("click", e => { e.stopPropagation(); showInfoPopup(key); });
+    return btn;
+  }
+
   function showDisagreementPopup(param, spot, dateIdx, date) {
     const flag = (param.flags[spot][dateIdx] || "").split("+").filter(Boolean);
     const windSpan = param.windSpan && param.windSpan[spot] && param.windSpan[spot][dateIdx];
@@ -1082,10 +1317,14 @@ __COASTLINE_DATA_JSON__
     const head = document.createElement("div");
     head.className = "card-head";
     const titleWrap = document.createElement("div");
+    const titleRow = document.createElement("div");
+    titleRow.className = "card-title-row";
     const title = document.createElement("h2");
     title.className = "card-title";
     title.textContent = param.label;
-    titleWrap.appendChild(title);
+    titleRow.appendChild(title);
+    titleRow.appendChild(makeInfoBtn(key));
+    titleWrap.appendChild(titleRow);
     const unit = document.createElement("div");
     unit.className = "card-unit";
     unit.textContent = param.unit + " · " + param.sourceLabel + ", " + shortDateRangeLabel(DATA.dates[0], DATA.dates[DATA.dates.length - 1]);
@@ -1143,6 +1382,15 @@ __COASTLINE_DATA_JSON__
       card.appendChild(caption);
     }
 
+    // Per-card AI summary
+    const cs = (DATA.cardSummaries || {})[key];
+    if (cs) {
+      const sum = document.createElement("p");
+      sum.className = "card-ai-summary";
+      sum.textContent = cs;
+      card.appendChild(sum);
+    }
+
     return card;
   }
 
@@ -1150,13 +1398,22 @@ __COASTLINE_DATA_JSON__
     const card = document.createElement("div");
     card.className = "card";
 
+    // Derive help key from label / source
+    const dirHelpKey = param.sourceLabel && param.sourceLabel.includes("Poseidon")
+      ? (param.label.includes("Wave") ? "poseidon_wave_dir" : "poseidon_wind_dir")
+      : (param.label.includes("Wave") ? "wave_dir" : "wind_dir");
+
     const head = document.createElement("div");
     head.className = "card-head";
     const titleWrap = document.createElement("div");
+    const titleRow = document.createElement("div");
+    titleRow.className = "card-title-row";
     const title = document.createElement("h2");
     title.className = "card-title";
     title.textContent = param.label;
-    titleWrap.appendChild(title);
+    titleRow.appendChild(title);
+    titleRow.appendChild(makeInfoBtn(dirHelpKey));
+    titleWrap.appendChild(titleRow);
     const unit = document.createElement("div");
     unit.className = "card-unit";
     unit.textContent = param.sourceLabel + ", " + shortDateRangeLabel(DATA.dates[0], DATA.dates[DATA.dates.length - 1]);
@@ -1343,10 +1600,14 @@ __COASTLINE_DATA_JSON__
     const head = document.createElement("div");
     head.className = "card-head";
     const titleWrap = document.createElement("div");
+    const titleRowLeg = document.createElement("div");
+    titleRowLeg.className = "card-title-row";
     const h2 = document.createElement("h2");
     h2.className = "card-title";
     h2.textContent = "Passage planner";
-    titleWrap.appendChild(h2);
+    titleRowLeg.appendChild(h2);
+    titleRowLeg.appendChild(makeInfoBtn("leg"));
+    titleWrap.appendChild(titleRowLeg);
     const sub = document.createElement("div");
     sub.className = "card-unit";
     sub.textContent = "ECMWF IFS hourly · fetched live";
@@ -1544,13 +1805,17 @@ __COASTLINE_DATA_JSON__
     const head = document.createElement("div");
     head.className = "card-head";
     const titleWrap = document.createElement("div");
+    const titleRowConv = document.createElement("div");
+    titleRowConv.className = "card-title-row";
     const title = document.createElement("h2");
     title.className = "card-title";
     title.textContent = "Convection / squall risk";
-    titleWrap.appendChild(title);
+    titleRowConv.appendChild(title);
+    titleRowConv.appendChild(makeInfoBtn("convection"));
+    titleWrap.appendChild(titleRowConv);
     const unit = document.createElement("div");
     unit.className = "card-unit";
-    unit.textContent = "GFS + Open-Meteo Marine · area centroid";
+    unit.textContent = "GFS + Open-Meteo Marine · worst across spots";
     titleWrap.appendChild(unit);
     head.appendChild(titleWrap);
     card.appendChild(head);
@@ -1608,6 +1873,14 @@ __COASTLINE_DATA_JSON__
       "SST marked † is carried forward past the marine model horizon — SST changes slowly in autumn so this is reasonable.";
     card.appendChild(note);
 
+    const convCs = (DATA.cardSummaries || {}).convection;
+    if (convCs) {
+      const convSum = document.createElement("p");
+      convSum.className = "card-ai-summary";
+      convSum.textContent = convCs;
+      card.appendChild(convSum);
+    }
+
     return card;
   }
 
@@ -1619,10 +1892,14 @@ __COASTLINE_DATA_JSON__
     const head = document.createElement("div");
     head.className = "card-head";
     const titleWrap = document.createElement("div");
+    const titleRowCharts = document.createElement("div");
+    titleRowCharts.className = "card-title-row";
     const title = document.createElement("h2");
     title.className = "card-title";
     title.textContent = "Synoptic charts";
-    titleWrap.appendChild(title);
+    titleRowCharts.appendChild(title);
+    titleRowCharts.appendChild(makeInfoBtn("charts"));
+    titleWrap.appendChild(titleRowCharts);
     const unit = document.createElement("div");
     unit.className = "card-unit";
     unit.textContent = "ECMWF · charts.ecmwf.int";

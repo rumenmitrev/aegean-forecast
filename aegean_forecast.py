@@ -1221,6 +1221,56 @@ def summary_data_table(wind_records, sea_records, upper=None, convection=None):
     return "\n".join(lines)
 
 
+def generate_card_summaries(wind_records, sea_records, upper, convection):
+    """One Claude call that returns a JSON object with a 2-3 sentence plain-
+    English summary for each meaningful dashboard card.  Skips gracefully on
+    no API key or error.  Returns {} on failure."""
+    if not wind_records:
+        return {}
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key and ANTHROPIC_API_KEY_FILE.exists():
+        api_key = ANTHROPIC_API_KEY_FILE.read_text(encoding="utf-8").strip()
+    if not api_key:
+        return {}
+
+    data_table = summary_data_table(wind_records, sea_records, upper, convection)
+
+    prompt = f"""You are a sailing weather analyst. The data below covers {TRIP_START} to {TRIP_END}.
+
+{data_table}
+
+Write a short (2-3 sentences, plain prose, no markdown) summary for each of these cards.
+Be specific: cite dates, spot names, and numbers from the data. Do not invent anything.
+
+Cards to summarise:
+- wind_mean: What does the week's wind regime look like? Which days and spots stand out?
+- wind_max: What are the peak sustained wind periods? How do they compare to the gusts?
+- gust: What is the gust ceiling and when/where does it peak?
+- wave: What is the sea state picture across the trip?
+- convection: What is the squall and waterspout risk based on CAPE and SST-T850?
+
+Respond ONLY with valid JSON mapping card key → summary string. Example:
+{{"wind_mean": "...", "gust": "...", "wave": "...", "convection": "...", "wind_max": "..."}}"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            default_headers={"anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID},
+        )
+        response = client.messages.create(
+            model=SAILING_SUMMARY_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = next((b.text for b in response.content if b.type == "text"), "")
+        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(raw)
+    except Exception as e:
+        print(f"Card summaries skipped: {e}", file=sys.stderr)
+        return {}
+
+
 def generate_sailing_summary(wind_records, wind_source_label, sea_records, previous_run_csv, upper=None, convection=None):
     """Ask Claude (SAILING_SUMMARY_MODEL) to turn this run's data into a
     sailing-focused narrative. Returns None (never raises) if the API key
@@ -1569,7 +1619,7 @@ def generate_chart_summaries(charts_meta):
 
 def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_opens_note,
                              sea_records, sea_opens_note, poseidon_records, poseidon_opens_note,
-                             tiers, sailing_summary, upper=None, convection=None):
+                             tiers, sailing_summary, upper=None, convection=None, card_summaries=None):
     dates = all_dates()
     params = {}
 
@@ -1763,6 +1813,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         "officialSources": OFFICIAL_SOURCES,
         "spotCoords": {name: list(coords) for name, coords in SPOTS.items()},
         "timezone": TRIP_TZ.key,
+        "cardSummaries": card_summaries or {},
     }
 
 
@@ -2053,6 +2104,11 @@ def main():
         else:
             print("  (no convection data)")
 
+    print("Generating per-card summaries...")
+    card_summaries = generate_card_summaries(wind_records, sea_records, upper, convection)
+    if card_summaries:
+        print(f"  Got summaries for: {', '.join(card_summaries.keys())}")
+
     sailing_summary = generate_sailing_summary(wind_records, wind_source_label, sea_records,
                                                previous_run_csv, upper, convection)
     if sailing_summary:
@@ -2068,6 +2124,7 @@ def main():
         poseidon_records=poseidon_records,
         poseidon_opens_note="HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip",
         tiers=tiers, sailing_summary=sailing_summary, upper=upper, convection=convection,
+        card_summaries=card_summaries,
     )
     write_dashboard(payload)
     print(f"\nDashboard written to {DASHBOARD_OUT}")
