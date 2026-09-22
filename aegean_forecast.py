@@ -1367,7 +1367,7 @@ present in it."""
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=8192,
+            max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
         text = next((b.text for b in response.content if b.type == "text"), "")
@@ -1459,7 +1459,7 @@ Data:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=8192,
+            max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in response.content if b.type == "text"), "")

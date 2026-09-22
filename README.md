@@ -7,32 +7,49 @@ Thassos, and nearby spots). Every run:
    GFS / DWD ICON), and Open-Meteo Marine sea-state data -- whichever tiers
    are close enough to the trip dates to have real skill. The medium-range
    consensus samples each model over a 3x3 grid kernel around every spot
-   (not one point) -- see "How the numbers are calculated" below.
+   (not one point) -- see "How the numbers are calculated" below. EC46 fills
+   in dates beyond the medium-range horizon so the back half of the trip
+   isn't blank.
 2. Fetches ECMWF official synoptic charts (two products per trip day: MSLP +
    850 hPa wind, and 500 hPa geopotential + 850 hPa temperature) from
    `charts.ecmwf.int` via the OpenCharts API (~9-10 days out). Saved to
-   `charts/` and deployed alongside the dashboard in `site/charts/`.
-3. Prints console tables and writes a row per place/day/tier to `runs.csv`
+   `charts/` and deployed alongside the dashboard in `site/charts/`. Chart
+   URLs are cached in `.url` sidecar files; downloads are skipped when the
+   URL hasn't changed.
+3. Fetches GFS 500 hPa upper-atmosphere data (geopotential height, temperature,
+   wind) and convection indicators (max CAPE across all spots, min 850 hPa
+   temperature, SST from the marine model) for synoptic context.
+4. Prints console tables and writes a row per place/day/tier to `runs.csv`
    -- overwritten fresh each run, so it always reflects only the latest
    run's data (past runs' snapshots still exist in git history, just not
    accumulated in the file itself).
-4. Asks Claude (`claude-opus-5`) for three types of AI analysis (all skipped
+5. Asks Claude (`claude-opus-5`) for three types of AI analysis (all skipped
    cleanly if `ANTHROPIC_API_KEY` isn't set):
-   - **Sailing briefing** -- 500-700 word narrative comparing this run to the
-     previous one, covering regime, per-spot roughness/calm, disagreement
-     days, local effects, and concrete routing/timing advice.
+   - **Sailing briefing** -- narrative comparing this run to the previous one,
+     covering regime, per-spot roughness/calm, disagreement days, convection
+     and squall risk, 500 hPa synoptic context, and routing/timing advice.
    - **Synoptic chart summaries** -- for each downloaded chart image, a 2-4
-     sentence plain-English interpretation of the pressure pattern and what it
-     means for Aegean sailors that day (multimodal: Claude reads the PNG).
-   - **Disagreement notes** -- for each flagged place/day (models spread beyond
-     the configured thresholds), a 1-3 sentence note explaining what the models
-     are split on and what the spread means for forecast confidence.
-5. Writes `dashboard.html`, a self-contained page with a real-coastline map
-   card, the AI sailing summary, per-parameter table/chart cards (with
-   clickable ⚠ popups on disagreement days showing per-model data + the AI
-   note), a synoptic-charts card (date tabs + chart-type toggle + AI
-   interpretation), and a status strip showing which tiers are live.
-6. Deploys it to EdgeOne Pages via the `edgeone` CLI, so the same URL stays
+     sentence plain-English interpretation (multimodal: Claude reads the PNG).
+     Summaries are cached by chart URL in `charts/summaries.json`.
+   - **Disagreement notes** -- for each flagged place/day, a 1-3 sentence note
+     explaining what the models are split on, informed by 500 hPa and
+     convection data where available.
+6. Writes `dashboard.html` with:
+   - Real-coastline map card
+   - Official-sources bar (before the AI summary) with links from `area.json`
+   - AI sailing summary (clearly labelled as interpretation only)
+   - Wind, wind direction, wind max, gust, rain, temperature cards (medium-range
+     consensus or EC46 fill); ⚠ cells open a popup with per-model table + AI note
+   - Wave height (Hs), wave direction, wave period cards; steep-sea cells amber
+   - **Passage planner** -- pick any two spots, departure time and boat speed;
+     browser fetches GFS hourly wind live and shows per-hour wind, angle to
+     heading, point of sail, and gust along the route
+   - **Convection / squall risk** card -- daily CAPE (worst across spots),
+     min T850, SST, SST-T850 delta; flags CAPE > 500 J/kg and delta > 13°C
+   - **Synoptic charts** card -- date tabs and MSLP/500hPa toggle with AI
+     synoptic interpretation per chart
+   - Status strip showing which tiers are live
+7. Deploys to EdgeOne Pages via the `edgeone` CLI, so the same URL stays
    current run after run.
 
 Automated via a scheduled GitHub Actions workflow (`.github/workflows/forecast.yml`, once daily at 10:00 Europe/Athens) that runs the script and commits the updated `runs.csv`/`dashboard.html` back to the repo.
