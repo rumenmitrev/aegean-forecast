@@ -1316,7 +1316,7 @@ __COASTLINE_DATA_JSON__
     url.searchParams.set("latitude", lats);
     url.searchParams.set("longitude", lons);
     url.searchParams.set("hourly", "windspeed_10m,winddirection_10m,windgusts_10m");
-    url.searchParams.set("models", "gfs_seamless");
+    url.searchParams.set("models", "ecmwf_ifs025");
     url.searchParams.set("wind_speed_unit", "kn");
     url.searchParams.set("forecast_days", "16");
     url.searchParams.set("timezone", timezone);
@@ -1349,7 +1349,7 @@ __COASTLINE_DATA_JSON__
     titleWrap.appendChild(h2);
     const sub = document.createElement("div");
     sub.className = "card-unit";
-    sub.textContent = "GFS hourly · fetched live";
+    sub.textContent = "ECMWF IFS hourly · fetched live";
     titleWrap.appendChild(sub);
     head.appendChild(titleWrap);
     card.appendChild(head);
