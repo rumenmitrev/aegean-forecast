@@ -419,7 +419,11 @@
     boat crossing a patch of sea can meet its roughest cell, not just the exact point: wave height is the
     <b>kernel max</b> (same worst-case reasoning as gust), period and direction are the kernel mean. Sea
     state is a single model (Open-Meteo Marine), so there's no further multi-model combine on top like
-    wind has &mdash; the kernel is the only combining step here.</p>
+    wind has &mdash; the kernel is the only combining step here. <b>Wave height is significant wave height
+    (Hs)</b>, the average of the highest third of waves; the occasional largest wave is roughly
+    1.5&ndash;2&times; that. Period matters as much as height: cells highlighted in amber are short-period
+    seas (Hs&nbsp;&gt;&nbsp;0.8&nbsp;m, period&nbsp;&lt;&nbsp;6&nbsp;s) &mdash; steeper and more
+    uncomfortable than the height alone suggests.</p>
 
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
     day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
@@ -804,6 +808,12 @@ __COASTLINE_DATA_JSON__
           td.style.fontWeight = "600";
           td.style.cursor = "pointer";
           td.addEventListener("click", () => showDisagreementPopup(param, p, i, date));
+        }
+        // Short-period sea: Hs > 0.8 m with period < 6 s is steep and choppy
+        if (param.shortPeriodWarn && param.shortPeriodWarn[p] && param.shortPeriodWarn[p][i]) {
+          td.title = "Short-period sea — steeper and more uncomfortable than height alone suggests";
+          td.style.background = "rgba(230,126,34,0.12)";
+          td.style.fontWeight = "600";
         }
         tr.appendChild(td);
       });

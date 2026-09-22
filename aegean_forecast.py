@@ -1536,13 +1536,27 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
     else:
         params["wind_dir"] = placeholder_block("Wind direction", "", wind_opens_note)
 
-    sea_specs = [("wave", "Wave height", "m", 1), ("period", "Wave period", "s", 1)]
+    sea_specs = [("wave", "Wave height (Hs)", "m", 1), ("period", "Wave period", "s", 1)]
     for key, label, unit, decimals in sea_specs:
         if sea_records:
             params[key] = build_param_block(sea_records, dates, key, label, unit, decimals, "Open-Meteo Marine",
                                              "Marine model doesn't reach these trip dates yet -- rerun closer to the trip")
         else:
             params[key] = placeholder_block(label, unit, sea_opens_note)
+
+    # Short-period sea warning: Hs > 0.8 m with period < 6 s is steep, choppy
+    # and more uncomfortable than height alone suggests -- flag those cells.
+    if sea_records and params["wave"].get("available") and params["period"].get("available"):
+        short_warn = {}
+        for spot in list(SPOTS.keys()):
+            short_warn[spot] = []
+            for i, d in enumerate(dates):
+                ht = params["wave"]["series"][spot][i]
+                per = params["period"]["series"][spot][i]
+                short_warn[spot].append(
+                    ht is not None and ht > 0.8 and per is not None and per < 6.0
+                )
+        params["wave"]["shortPeriodWarn"] = short_warn
 
     if sea_records:
         params["wave_dir"] = build_direction_block(sea_records, dates, "dir", "Wave direction", "Open-Meteo Marine",
