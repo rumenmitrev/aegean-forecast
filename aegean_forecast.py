@@ -347,7 +347,17 @@ def poseidon_forecast(model, lat, lon):
     negligible for a once-daily job, cheap insurance against the same thing
     happening on the real run."""
     time.sleep(0.3)
-    return fetch(f"{POSEIDON_BASE}/{model}/{lat:.4f}/{lon:.4f}", {})
+    url = f"{POSEIDON_BASE}/{model}/{lat:.4f}/{lon:.4f}"
+    for attempt in range(3):
+        try:
+            return fetch(url, {})
+        except Exception as e:
+            if attempt == 2:
+                raise
+            wait = 5 * (2 ** attempt)   # 5s, 10s
+            print(f"  Poseidon {model} {lat}/{lon}: {e} — retrying in {wait}s ({attempt+1}/2)...",
+                  file=sys.stderr)
+            time.sleep(wait)
 
 
 def parse_poseidon_series(data, fields):
