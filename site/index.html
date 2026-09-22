@@ -214,6 +214,50 @@
   .tooltip .t-swatch { width: 10px; height: 2px; border-radius: 1px; flex-shrink: 0; }
   .tooltip .t-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; color: var(--ink-primary); }
 
+  /* Passage planner card */
+  .leg-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+  .leg-controls label { display: flex; flex-direction: column; gap: 3px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); font-weight: 600; }
+  .leg-controls select, .leg-controls input[type=number] {
+    background: var(--surface-page); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--ink-primary); font-size: 13px; padding: 5px 8px; min-width: 80px; }
+  .leg-controls select { min-width: 140px; }
+  .leg-plan-btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: "Public Sans", sans-serif; white-space: nowrap; align-self: flex-end;
+  }
+  .leg-plan-btn:hover { opacity: .88; }
+  .leg-plan-btn:disabled { opacity: .45; cursor: default; }
+  .leg-summary { font-size: 13px; color: var(--ink-secondary); margin-bottom: 10px; }
+  .leg-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .leg-table th { text-align: left; color: var(--ink-muted); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+  .leg-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--gridline); color: var(--ink-primary); }
+  .leg-table td.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .leg-sail-beat  { color: #c0391a; font-weight: 600; }
+  .leg-sail-reach { color: var(--status-good); }
+  .leg-sail-run   { color: var(--ink-secondary); }
+  .leg-warn       { background: rgba(230,126,34,0.10); }
+  .leg-bad        { background: rgba(192,57,26,0.10); }
+  .leg-error      { color: var(--ink-muted); font-size: 13px; padding: 12px 0; }
+
+  /* Convection / instability card */
+  .conv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .conv-table th { text-align: left; color: var(--ink-muted); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+  .conv-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--gridline); color: var(--ink-primary);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .conv-table td:first-child { font-family: inherit; color: var(--ink-secondary); }
+  .conv-flag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600;
+    background: rgba(230,126,34,0.14); color: #c0631a; border: 1px solid rgba(230,126,34,0.3);
+    border-radius: 4px; padding: 1px 5px; vertical-align: middle; }
+  .conv-note { font-size: 12px; color: var(--ink-muted); margin-top: 8px; line-height: 1.5; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .conv-flag { color: #e8a162; background: rgba(230,126,34,0.10); }
+  }
+  :root[data-theme="dark"] .conv-flag { color: #e8a162; background: rgba(230,126,34,0.10); }
+
   /* Synoptic charts card */
   .chart-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
   .chart-tabs button {
@@ -329,6 +373,8 @@
     font-size: 12px; color: var(--ink-muted); line-height: 1.6;
   }
   footer.foot b { color: var(--ink-secondary); }
+  footer.foot a { color: var(--accent); text-decoration: none; }
+  footer.foot a:hover { text-decoration: underline; }
 
   @media (max-width: 640px) {
     h1 { font-size: 30px; }
@@ -378,6 +424,17 @@
 
   <!-- Claude-generated narrative synthesis of the data below -- null
        (hidden) if ANTHROPIC_API_KEY wasn't set or the call failed this run. -->
+  <!-- Official sources rendered by buildFooter() from DATA.officialSources;
+       placed here (above the AI summary) so it's seen before the AI text. -->
+  <div id="official-sources-bar" hidden style="
+    font-size:12.5px; color:var(--ink-secondary); margin-bottom:10px;
+    padding:8px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface-card); line-height:1.7;
+  ">
+    <strong>Before you go:</strong> <span id="official-sources-list"></span>
+    <span style="color:var(--ink-muted);"> — these decide whether you depart; the AI summary below is interpretation only.</span>
+  </div>
+
   <section class="summary-card" id="summary-card" hidden></section>
 
   <main id="cards"></main>
@@ -393,38 +450,48 @@
     charts.ecmwf.int &mdash; all via <b>aegean_forecast.py</b>. Each place uses its nearest sea grid
     cell, not land.</p>
 
-    <p><b>How the medium-range wind/temp/rain/gust numbers are calculated:</b> each of the configured
+    <p><b>How the medium-range wind numbers are calculated:</b> each of the configured
     models (<span class="mm-label"></span>) is sampled over a 3&times;3 grid of points around every place
     &mdash; roughly 30&times;25&nbsp;km, not a single GPS pin &mdash; because a boat sailing that spot
     experiences the whole patch of sea around it, not one exact point. Wind speed, direction, temperature,
     and rain are the <b>mean</b> across those 9 points per model, which smooths out single-cell grid noise.
-    Gust is the <b>max</b> across those 9 points instead of the mean &mdash; gust is already a worst-case
-    figure, so averaging it away would blunt a real local spike (a gap-wind gust one grid cell over, say)
-    instead of surfacing it. The models are then combined the same way on top of that: mean for
-    wind/temp/rain/direction, max for gust &mdash; so the gust shown is the strongest plausible gust
-    anywhere in that patch, across all of them. That makes it a safety margin by design, deliberately
-    higher than "the exact point forecast," not a bug.</p>
+    Gust and wind max are taken as the <b>max</b> across those 9 points &mdash; both are worst-case figures
+    where averaging would hide a real local peak. The models are then combined the same way on top:
+    mean for wind/temp/rain/direction, max for gust &mdash; so the gust shown is the strongest plausible
+    gust anywhere in that patch, across all models, a safety margin by design.
+    <b>Wind (max)</b> is the daily maximum mean wind (the highest hourly average in the day), useful as a
+    comparator for gusts: a gust/wind-max ratio of 1.3&ndash;1.5 is normal for open sea. A ratio well
+    above that, or a gust much larger than wind-max, is worth noting.</p>
 
     <p><b>Model disagreement:</b> a place/day is flagged (&#9888;) when the models' wind speeds spread by
     more than <span class="sw"></span>, or their directions by more than <span class="sd"></span> while
-    wind is at least <span class="dw"></span>. On a flagged day the wind cell shows the actual
-    min&ndash;max span across models instead of one blended number (a mean of two very different model
-    reads would misrepresent both), and the full per-model breakdown always goes into <b>runs.csv</b> and
-    into the data given to the AI summary above, so it can explain what the disagreement means for that
-    day rather than silently averaging past it.</p>
+    wind is at least <span class="dw"></span>. On a flagged wind cell, the cell shows the actual
+    min&ndash;max span (e.g. 10&ndash;17&nbsp;kt) instead of one blended number. On a flagged direction cell,
+    it shows the per-model bearings (e.g. NE&nbsp;/&nbsp;SW) instead of the circular mean; if the model
+    directions cancel completely, the cell shows <b>VAR</b>. Clicking any &#9888; cell opens a popup with
+    the full per-model table, the numeric spread, and an AI note explaining what the disagreement means
+    for that day. The per-model breakdown also goes into <b>runs.csv</b> and the AI sailing summary.</p>
 
     <p><b>Sea state</b> (wave height, period, direction) uses the same 3&times;3 kernel as wind, since a
     boat crossing a patch of sea can meet its roughest cell, not just the exact point: wave height is the
     <b>kernel max</b> (same worst-case reasoning as gust), period and direction are the kernel mean. Sea
     state is a single model (Open-Meteo Marine), so there's no further multi-model combine on top like
-    wind has &mdash; the kernel is the only combining step here.</p>
+    wind has &mdash; the kernel is the only combining step here. <b>Wave height is significant wave height
+    (Hs)</b>, the average of the highest third of waves; the occasional largest wave is roughly
+    1.5&ndash;2&times; that. Cells highlighted in amber are <b>steep seas</b> (wave steepness
+    Hs&nbsp;/&nbsp;1.56T²&nbsp;&gt;&nbsp;0.04 &mdash; roughly 1.0&nbsp;m at 4&nbsp;s, 1.6&nbsp;m
+    at 5&nbsp;s, 2.3&nbsp;m at 6&nbsp;s), which are uncomfortable and potentially dangerous
+    regardless of height alone.</p>
 
     <p>Ensemble/consensus wind smooths out individual fronts &mdash; read it as the week's regime, not a
     day-by-day forecast. EC46 (the coarsest, farthest-out tier: a single 51-member ensemble mean at
     &sim;36&nbsp;km resolution) is the one tier still read at a single point, with no kernel or per-model
-    combine &mdash; it's already someone else's finished ensemble mean. Rows show the region's actual spread
-    (sheltered vs. exposed spots), never a single averaged number, since this route crosses both. This page
-    regenerates automatically on every run.</p>
+    combine &mdash; it's already someone else's finished ensemble mean. EC46 also fills the back half of
+    the trip when the medium-range horizon hasn't reached those dates yet (the source column in the raw
+    data distinguishes which rows are which). A low EC46 mean late in the week signals uncertainty and
+    ensemble smoothing, not a guaranteed calm. Rows show the region's actual spread (sheltered
+    vs.&nbsp;exposed spots), never a single averaged number, since this route crosses both. This page
+    regenerates on every run.</p>
 
     <!-- Hidden by buildFooter() when area.json's poseidon_enabled is false
          -- see the "poseidon" id below. -->
@@ -438,12 +505,13 @@
     &mdash; it can change or vanish without notice, unlike every other source described above, and some coastal
     spots simply have no wave data (a masked/land grid cell in HCMR's model, shown as &ldquo;&ndash;&rdquo;
     rather than a real reading).</p>
+
   </footer>
 
 </div>
 
 <script id="dashboard-data" type="application/json">
-{"dates": ["2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"], "runStamp": "2026-09-21T11:03+03:00", "places": ["Keramoti / Thassos (E of Thassos open water)", "Samothrace (S of Samothrace open water)", "West from Lemnos (open water)", "Thracian Sea (open water)", "Dardaneles (E of Lemnos open water)", "Agios Efstratios (S of Lemnos open water)", "Mount Athos (N approach)"], "tiers": [{"name": "EC46 extended range", "state": "live", "note": "51-member ensemble mean"}, {"name": "Medium-range consensus", "state": "live", "note": "ECMWF IFS / NOAA GFS / DWD ICON"}, {"name": "Sea state", "state": "live", "note": "Open-Meteo Marine"}, {"name": "ECMWF synoptic charts", "state": "pending", "note": "opens ~9-10 days out"}, {"name": "Poseidon regional (unofficial)", "state": "pending", "note": "opens ~2026-09-18 (short horizon)"}], "params": {"wind_mean": {"available": true, "label": "Wind (mean)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [16.5, 13.5, 9.3, null, null, null, null], "Samothrace (S of Samothrace open water)": [19.2, 17.0, 11.4, null, null, null, null], "West from Lemnos (open water)": [19.1, 17.4, 11.7, null, null, null, null], "Thracian Sea (open water)": [18.0, 16.2, 11.9, null, null, null, null], "Dardaneles (E of Lemnos open water)": [22.1, 19.8, 12.0, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [21.4, 18.4, 11.0, null, null, null, null], "Mount Athos (N approach)": [11.4, 13.1, 8.1, null, null, null, null]}, "tripExtremes": {"lowValue": 8.1, "lowPlace": "Mount Athos (N approach)", "highValue": 22.1, "highPlace": "Dardaneles (E of Lemnos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [9.3, 16.5], "Samothrace (S of Samothrace open water)": [11.4, 19.2], "West from Lemnos (open water)": [11.7, 19.1], "Thracian Sea (open water)": [11.9, 18.0], "Dardaneles (E of Lemnos open water)": [12.0, 22.1], "Agios Efstratios (S of Lemnos open water)": [11.0, 21.4], "Mount Athos (N approach)": [8.1, 13.1]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)", "flags": {"Keramoti / Thassos (E of Thassos open water)": ["", "wind", "dir", "", "", "", ""], "Samothrace (S of Samothrace open water)": ["", "", "wind+dir", "", "", "", ""], "West from Lemnos (open water)": ["", "", "wind+dir", "", "", "", ""], "Thracian Sea (open water)": ["", "", "wind+dir", "", "", "", ""], "Dardaneles (E of Lemnos open water)": ["", "", "wind+dir", "", "", "", ""], "Agios Efstratios (S of Lemnos open water)": ["", "", "wind+dir", "", "", "", ""], "Mount Athos (N approach)": ["", "wind", "dir", "", "", "", ""]}, "windSpan": {"Keramoti / Thassos (E of Thassos open water)": [[15.81111111111111, 17.144444444444446], [9.822222222222221, 17.266666666666666], [6.522222222222222, 12.02222222222222], null, null, null, null], "Samothrace (S of Samothrace open water)": [[17.188888888888886, 21.200000000000003], [15.92222222222222, 18.12222222222222], [7.78888888888889, 14.922222222222224], null, null, null, null], "West from Lemnos (open water)": [[17.711111111111112, 20.400000000000002], [14.355555555555554, 20.344444444444445], [7.911111111111111, 15.488888888888889], null, null, null, null], "Thracian Sea (open water)": [[17.744444444444444, 18.177777777777777], [13.466666666666665, 18.855555555555554], [8.655555555555557, 15.133333333333333], null, null, null, null], "Dardaneles (E of Lemnos open water)": [[21.099999999999998, 23.077777777777776], [18.644444444444446, 20.855555555555554], [6.666666666666667, 17.255555555555556], null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [[19.666666666666664, 23.122222222222224], [17.1, 19.72222222222222], [6.300000000000001, 15.722222222222221], null, null, null, null], "Mount Athos (N approach)": [[9.066666666666668, 13.68888888888889], [9.78888888888889, 16.366666666666667], [6.2555555555555555, 9.88888888888889], null, null, null, null]}, "gustSpan": {"Keramoti / Thassos (E of Thassos open water)": [[25.9, 31.9], [24.5, 33.6], [13.0, 31.9], null, null, null, null], "Samothrace (S of Samothrace open water)": [[30.9, 32.7], [29.7, 35.0], [15.0, 33.4], null, null, null, null], "West from Lemnos (open water)": [[29.7, 34.8], [27.2, 37.3], [14.4, 32.7], null, null, null, null], "Thracian Sea (open water)": [[29.7, 31.5], [27.8, 33.2], [13.8, 32.7], null, null, null, null], "Dardaneles (E of Lemnos open water)": [[31.5, 35.8], [31.7, 33.8], [16.3, 30.5], null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [[32.3, 34.4], [31.3, 33.2], [15.9, 31.3], null, null, null, null], "Mount Athos (N approach)": [[23.3, 31.3], [24.1, 33.6], [15.0, 29.5], null, null, null, null]}, "dirSpread": {"Keramoti / Thassos (E of Thassos open water)": [5, 12, 169, null, null, null, null], "Samothrace (S of Samothrace open water)": [3, 18, 151, null, null, null, null], "West from Lemnos (open water)": [3, 20, 172, null, null, null, null], "Thracian Sea (open water)": [3, 18, 172, null, null, null, null], "Dardaneles (E of Lemnos open water)": [0, 15, 86, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [1, 21, 176, null, null, null, null], "Mount Athos (N approach)": [3, 27, 149, null, null, null, null]}, "perModel": {"Keramoti / Thassos (E of Thassos open water)": [null, {"ECMWF IFS": {"wind": 17, "dir": "NE", "gust": 34}, "NOAA GFS": {"wind": 10, "dir": "NNE", "gust": 24}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, {"ECMWF IFS": {"wind": 12, "dir": "NE", "gust": 32}, "NOAA GFS": {"wind": 7, "dir": "WSW", "gust": 13}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Samothrace (S of Samothrace open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 8, "dir": "W", "gust": 15}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "West from Lemnos (open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 8, "dir": "SW", "gust": 14}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Thracian Sea (open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 9, "dir": "WSW", "gust": 14}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Dardaneles (E of Lemnos open water)": [null, null, {"ECMWF IFS": {"wind": 17, "dir": "NE", "gust": 30}, "NOAA GFS": {"wind": 7, "dir": "NW", "gust": 16}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, null, {"ECMWF IFS": {"wind": 16, "dir": "NE", "gust": 31}, "NOAA GFS": {"wind": 6, "dir": "SW", "gust": 16}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Mount Athos (N approach)": [null, {"ECMWF IFS": {"wind": 16, "dir": "ENE", "gust": 34}, "NOAA GFS": {"wind": 10, "dir": "E", "gust": 24}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, {"ECMWF IFS": {"wind": 10, "dir": "ENE", "gust": 30}, "NOAA GFS": {"wind": 6, "dir": "SSW", "gust": 15}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null]}, "disagreeNotes": {"Keramoti / Thassos (E of Thassos open water)|||2026-10-04": "Both available models agree on a northeasterly, but they split hard on strength: ECMWF has 17 kt with gusts to 34 kt while GFS has only 10 kt gusting 24 kt, a 7 kt wind and 9 kt gust spread (ICON gives no data here). Aloft the 500 hPa height is 5735 m with a brisk 37 kt northerly flow and t500 of -12.2 C, which supports an active, well-mixed northerly regime and leans toward the stronger ECMWF outcome rather than the light GFS one. Plan for a reefable NE breeze with gusts into the low 30s, but be ready for it to underdeliver at around 10 kt.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-05": "The models are 169 degrees apart on direction, ECMWF holding NE at 12 kt with 32 kt gusts while GFS swings to WSW at 7 kt with only 13 kt gusts, so this is essentially a question of whether the northerly regime survives the day or collapses and backs around. The 500 hPa pattern still shows 5736 m heights with 33 kt NNW flow aloft, which favours the continued northeasterly solution, though the near-zero temperature signal (t500 -12.5 C) means nothing is driving strong convection either way. Practically, it could be a 12 kt NE day with 30 kt gusts or a soft, shifty westerly drift, so rig conservatively and check the morning run.", "Samothrace (S of Samothrace open water)|||2026-10-05": "This is a full wind-plus-direction split: ECMWF gives NE 15 kt gusting 33 kt while GFS gives W 8 kt gusting 15 kt, a 151 degree direction difference and 18 kt gust difference. With 500 hPa heights at 5736 m and 33 kt of NNW flow overhead, the upper pattern is still driving northerly air down over the north Aegean, which tilts the odds toward the ECMWF northeasterly. Treat it as potentially a genuine 15 kt sailing day with 30-plus knot gusts, and only assume the light westerly if the morning obs confirm it.", "West from Lemnos (open water)|||2026-10-05": "ECMWF and GFS disagree by 172 degrees in direction and 8 kt in wind, with ECMWF at NE 15 kt gusting 33 kt versus GFS at SW 8 kt gusting 14 kt, so the two runs describe opposite days on the same water. The upper-level flow of 33 kt from the NNW at a 5736 m 500 hPa height is consistent with the northeasterly surface solution, making the ECMWF scenario the more physically supported one. Expect either a workable breeze with gusts around 33 kt or a slack southwesterly, so carry the sail inventory for both.", "Thracian Sea (open water)|||2026-10-05": "The split here is 172 degrees in direction and 19 kt in gusts: ECMWF NE 15 kt with 33 kt gusts against GFS WSW 9 kt with 14 kt gusts. The 500 hPa chart shows 5736 m heights and 33 kt NNW flow, a pattern that feeds northerly surface wind into the Thracian Sea and argues for the ECMWF outcome. In practice this is the difference between a brisk, gusty reaching day and a near-drifting one, so plan for the windier case and be pleasantly surprised if it goes light.", "Dardaneles (E of Lemnos open water)|||2026-10-05": "This is the biggest strength split of the group at 11 kt, ECMWF NE 17 kt gusting 30 kt versus GFS NW 7 kt gusting 16 kt, with directions 86 degrees apart. With 33 kt of NNW flow aloft at a 5736 m 500 hPa height, both solutions are at least broadly northerly, so the real uncertainty is how strongly that upper flow couples to the surface in the Dardanelles approach. Assume the stronger ECMWF case for planning, since 17 kt with 30 kt gusts is a very different proposition from 7 kt.", "Agios Efstratios (S of Lemnos open water)|||2026-10-05": "ECMWF forecasts NE 16 kt gusting 31 kt while GFS forecasts SW 6 kt gusting 16 kt, a 176 degree direction reversal and a 9 kt wind spread, so the models cannot agree on which side of the island is the lee. The 500 hPa flow of 33 kt from the NNW at 5736 m supports the northerly regime continuing, which makes the ECMWF northeasterly the more likely of the two. Choose your anchorage or start line late, because the sheltered side flips completely between the two scenarios.", "Mount Athos (N approach)|||2026-10-04": "Direction is broadly agreed here, ENE versus E with only 27 degrees of spread, but strength is not: ECMWF has 16 kt gusting 34 kt while GFS has 10 kt gusting 24 kt. The 500 hPa analysis for the day shows 5735 m heights with a strong 37 kt northerly flow aloft and t500 of -12.2 C, an actively mixing northerly pattern that supports the higher ECMWF numbers. Expect an easterly breeze on the north approach with gusts plausibly in the low 30s, which near Athos means real acceleration and downdraft potential.", "Mount Athos (N approach)|||2026-10-05": "The wind speeds are similar and modest, 10 kt from ECMWF against 6 kt from GFS, but the direction differs by 149 degrees, ENE versus SSW, and the gusts by 14 kt (30 kt versus 15 kt). The 500 hPa flow is still 33 kt from the NNW at 5736 m, which favours the easterly component solution and the gustier ECMWF profile over a light southerly. Practically the base breeze is light either way, but the ECMWF run implies squally 30 kt gusts off the high ground, so do not be caught overcanvassed close under the peak."}}, "gust": {"available": true, "label": "Gust (max)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [31.9, 33.6, 31.9, null, null, null, null], "Samothrace (S of Samothrace open water)": [32.7, 35.0, 33.4, null, null, null, null], "West from Lemnos (open water)": [34.8, 37.3, 32.7, null, null, null, null], "Thracian Sea (open water)": [31.5, 33.2, 32.7, null, null, null, null], "Dardaneles (E of Lemnos open water)": [35.8, 33.8, 30.5, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [34.4, 33.2, 31.3, null, null, null, null], "Mount Athos (N approach)": [31.3, 33.6, 29.5, null, null, null, null]}, "tripExtremes": {"lowValue": 29.5, "lowPlace": "Mount Athos (N approach)", "highValue": 37.3, "highPlace": "West from Lemnos (open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [31.9, 33.6], "Samothrace (S of Samothrace open water)": [32.7, 35.0], "West from Lemnos (open water)": [32.7, 37.3], "Thracian Sea (open water)": [31.5, 33.2], "Dardaneles (E of Lemnos open water)": [30.5, 35.8], "Agios Efstratios (S of Lemnos open water)": [31.3, 34.4], "Mount Athos (N approach)": [29.5, 33.6]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)"}, "rain": {"available": true, "label": "Rain", "unit": "mm", "decimals": 1, "series": {"Keramoti / Thassos (E of Thassos open water)": [0.0, 0.1, 0.0, null, null, null, null], "Samothrace (S of Samothrace open water)": [0.0, 0.1, 0.1, null, null, null, null], "West from Lemnos (open water)": [0.1, 0.1, 0.5, null, null, null, null], "Thracian Sea (open water)": [0.0, 0.0, 0.1, null, null, null, null], "Dardaneles (E of Lemnos open water)": [0.0, 0.9, 0.0, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [0.0, 0.1, 0.2, null, null, null, null], "Mount Athos (N approach)": [0.1, 0.3, 0.2, null, null, null, null]}, "tripExtremes": {"lowValue": 0.0, "lowPlace": "Keramoti / Thassos (E of Thassos open water)", "highValue": 0.9, "highPlace": "Dardaneles (E of Lemnos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [0.0, 0.1], "Samothrace (S of Samothrace open water)": [0.0, 0.1], "West from Lemnos (open water)": [0.1, 0.5], "Thracian Sea (open water)": [0.0, 0.1], "Dardaneles (E of Lemnos open water)": [0.0, 0.9], "Agios Efstratios (S of Lemnos open water)": [0.0, 0.2], "Mount Athos (N approach)": [0.1, 0.3]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)"}, "temp_lo": {"available": true, "label": "Temp (low)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [18.9, 18.4, 18.5, null, null, null, null], "Samothrace (S of Samothrace open water)": [19.3, 19.3, 19.5, null, null, null, null], "West from Lemnos (open water)": [19.9, 19.9, 20.1, null, null, null, null], "Thracian Sea (open water)": [19.4, 19.3, 19.5, null, null, null, null], "Dardaneles (E of Lemnos open water)": [18.7, 18.8, 19.0, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [19.3, 19.3, 19.5, null, null, null, null], "Mount Athos (N approach)": [20.1, 19.5, 19.5, null, null, null, null]}, "tripExtremes": {"lowValue": 18.4, "lowPlace": "Keramoti / Thassos (E of Thassos open water)", "highValue": 20.1, "highPlace": "West from Lemnos (open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [18.4, 18.9], "Samothrace (S of Samothrace open water)": [19.3, 19.5], "West from Lemnos (open water)": [19.9, 20.1], "Thracian Sea (open water)": [19.3, 19.5], "Dardaneles (E of Lemnos open water)": [18.7, 19.0], "Agios Efstratios (S of Lemnos open water)": [19.3, 19.5], "Mount Athos (N approach)": [19.5, 20.1]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)"}, "temp_hi": {"available": true, "label": "Temp (high)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [22.8, 22.0, 21.6, null, null, null, null], "Samothrace (S of Samothrace open water)": [22.4, 21.8, 21.6, null, null, null, null], "West from Lemnos (open water)": [22.1, 21.7, 21.6, null, null, null, null], "Thracian Sea (open water)": [22.6, 22.0, 21.6, null, null, null, null], "Dardaneles (E of Lemnos open water)": [21.9, 21.4, 21.2, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [22.1, 21.7, 21.5, null, null, null, null], "Mount Athos (N approach)": [22.7, 22.2, 22.1, null, null, null, null]}, "tripExtremes": {"lowValue": 21.2, "lowPlace": "Dardaneles (E of Lemnos open water)", "highValue": 22.8, "highPlace": "Keramoti / Thassos (E of Thassos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [21.6, 22.8], "Samothrace (S of Samothrace open water)": [21.6, 22.4], "West from Lemnos (open water)": [21.6, 22.1], "Thracian Sea (open water)": [21.6, 22.6], "Dardaneles (E of Lemnos open water)": [21.2, 21.9], "Agios Efstratios (S of Lemnos open water)": [21.5, 22.1], "Mount Athos (N approach)": [22.1, 22.7]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)"}, "wind_dir": {"available": true, "type": "direction", "label": "Wind direction", "unit": "", "series": {"Keramoti / Thassos (E of Thassos open water)": ["NE", "NNE", "NW", null, null, null, null], "Samothrace (S of Samothrace open water)": ["NE", "NE", "NNW", null, null, null, null], "West from Lemnos (open water)": ["NE", "NE", "SE", null, null, null, null], "Thracian Sea (open water)": ["NE", "NE", "NW", null, null, null, null], "Dardaneles (E of Lemnos open water)": ["NE", "NE", "N", null, null, null, null], "Agios Efstratios (S of Lemnos open water)": ["NE", "NE", "SE", null, null, null, null], "Mount Athos (N approach)": ["ENE", "ENE", "SE", null, null, null, null]}, "predominant": {"Keramoti / Thassos (E of Thassos open water)": "NNE", "Samothrace (S of Samothrace open water)": "NNE", "West from Lemnos (open water)": "ENE", "Thracian Sea (open water)": "NNE", "Dardaneles (E of Lemnos open water)": "NNE", "Agios Efstratios (S of Lemnos open water)": "ENE", "Mount Athos (N approach)": "E"}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON)", "flags": {"Keramoti / Thassos (E of Thassos open water)": ["", "wind", "dir", "", "", "", ""], "Samothrace (S of Samothrace open water)": ["", "", "wind+dir", "", "", "", ""], "West from Lemnos (open water)": ["", "", "wind+dir", "", "", "", ""], "Thracian Sea (open water)": ["", "", "wind+dir", "", "", "", ""], "Dardaneles (E of Lemnos open water)": ["", "", "wind+dir", "", "", "", ""], "Agios Efstratios (S of Lemnos open water)": ["", "", "wind+dir", "", "", "", ""], "Mount Athos (N approach)": ["", "wind", "dir", "", "", "", ""]}, "dirSpread": {"Keramoti / Thassos (E of Thassos open water)": [5, 12, 169, null, null, null, null], "Samothrace (S of Samothrace open water)": [3, 18, 151, null, null, null, null], "West from Lemnos (open water)": [3, 20, 172, null, null, null, null], "Thracian Sea (open water)": [3, 18, 172, null, null, null, null], "Dardaneles (E of Lemnos open water)": [0, 15, 86, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [1, 21, 176, null, null, null, null], "Mount Athos (N approach)": [3, 27, 149, null, null, null, null]}, "perModel": {"Keramoti / Thassos (E of Thassos open water)": [null, {"ECMWF IFS": {"wind": 17, "dir": "NE", "gust": 34}, "NOAA GFS": {"wind": 10, "dir": "NNE", "gust": 24}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, {"ECMWF IFS": {"wind": 12, "dir": "NE", "gust": 32}, "NOAA GFS": {"wind": 7, "dir": "WSW", "gust": 13}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Samothrace (S of Samothrace open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 8, "dir": "W", "gust": 15}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "West from Lemnos (open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 8, "dir": "SW", "gust": 14}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Thracian Sea (open water)": [null, null, {"ECMWF IFS": {"wind": 15, "dir": "NE", "gust": 33}, "NOAA GFS": {"wind": 9, "dir": "WSW", "gust": 14}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Dardaneles (E of Lemnos open water)": [null, null, {"ECMWF IFS": {"wind": 17, "dir": "NE", "gust": 30}, "NOAA GFS": {"wind": 7, "dir": "NW", "gust": 16}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, null, {"ECMWF IFS": {"wind": 16, "dir": "NE", "gust": 31}, "NOAA GFS": {"wind": 6, "dir": "SW", "gust": 16}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null], "Mount Athos (N approach)": [null, {"ECMWF IFS": {"wind": 16, "dir": "ENE", "gust": 34}, "NOAA GFS": {"wind": 10, "dir": "E", "gust": 24}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, {"ECMWF IFS": {"wind": 10, "dir": "ENE", "gust": 30}, "NOAA GFS": {"wind": 6, "dir": "SSW", "gust": 15}, "DWD ICON": {"wind": null, "dir": null, "gust": null}}, null, null, null, null]}, "gustSpan": {"Keramoti / Thassos (E of Thassos open water)": [[25.9, 31.9], [24.5, 33.6], [13.0, 31.9], null, null, null, null], "Samothrace (S of Samothrace open water)": [[30.9, 32.7], [29.7, 35.0], [15.0, 33.4], null, null, null, null], "West from Lemnos (open water)": [[29.7, 34.8], [27.2, 37.3], [14.4, 32.7], null, null, null, null], "Thracian Sea (open water)": [[29.7, 31.5], [27.8, 33.2], [13.8, 32.7], null, null, null, null], "Dardaneles (E of Lemnos open water)": [[31.5, 35.8], [31.7, 33.8], [16.3, 30.5], null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [[32.3, 34.4], [31.3, 33.2], [15.9, 31.3], null, null, null, null], "Mount Athos (N approach)": [[23.3, 31.3], [24.1, 33.6], [15.0, 29.5], null, null, null, null]}, "windSpan": {"Keramoti / Thassos (E of Thassos open water)": [[15.81111111111111, 17.144444444444446], [9.822222222222221, 17.266666666666666], [6.522222222222222, 12.02222222222222], null, null, null, null], "Samothrace (S of Samothrace open water)": [[17.188888888888886, 21.200000000000003], [15.92222222222222, 18.12222222222222], [7.78888888888889, 14.922222222222224], null, null, null, null], "West from Lemnos (open water)": [[17.711111111111112, 20.400000000000002], [14.355555555555554, 20.344444444444445], [7.911111111111111, 15.488888888888889], null, null, null, null], "Thracian Sea (open water)": [[17.744444444444444, 18.177777777777777], [13.466666666666665, 18.855555555555554], [8.655555555555557, 15.133333333333333], null, null, null, null], "Dardaneles (E of Lemnos open water)": [[21.099999999999998, 23.077777777777776], [18.644444444444446, 20.855555555555554], [6.666666666666667, 17.255555555555556], null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [[19.666666666666664, 23.122222222222224], [17.1, 19.72222222222222], [6.300000000000001, 15.722222222222221], null, null, null, null], "Mount Athos (N approach)": [[9.066666666666668, 13.68888888888889], [9.78888888888889, 16.366666666666667], [6.2555555555555555, 9.88888888888889], null, null, null, null]}, "disagreeNotes": {"Keramoti / Thassos (E of Thassos open water)|||2026-10-04": "Both available models agree on a northeasterly, but they split hard on strength: ECMWF has 17 kt with gusts to 34 kt while GFS has only 10 kt gusting 24 kt, a 7 kt wind and 9 kt gust spread (ICON gives no data here). Aloft the 500 hPa height is 5735 m with a brisk 37 kt northerly flow and t500 of -12.2 C, which supports an active, well-mixed northerly regime and leans toward the stronger ECMWF outcome rather than the light GFS one. Plan for a reefable NE breeze with gusts into the low 30s, but be ready for it to underdeliver at around 10 kt.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-05": "The models are 169 degrees apart on direction, ECMWF holding NE at 12 kt with 32 kt gusts while GFS swings to WSW at 7 kt with only 13 kt gusts, so this is essentially a question of whether the northerly regime survives the day or collapses and backs around. The 500 hPa pattern still shows 5736 m heights with 33 kt NNW flow aloft, which favours the continued northeasterly solution, though the near-zero temperature signal (t500 -12.5 C) means nothing is driving strong convection either way. Practically, it could be a 12 kt NE day with 30 kt gusts or a soft, shifty westerly drift, so rig conservatively and check the morning run.", "Samothrace (S of Samothrace open water)|||2026-10-05": "This is a full wind-plus-direction split: ECMWF gives NE 15 kt gusting 33 kt while GFS gives W 8 kt gusting 15 kt, a 151 degree direction difference and 18 kt gust difference. With 500 hPa heights at 5736 m and 33 kt of NNW flow overhead, the upper pattern is still driving northerly air down over the north Aegean, which tilts the odds toward the ECMWF northeasterly. Treat it as potentially a genuine 15 kt sailing day with 30-plus knot gusts, and only assume the light westerly if the morning obs confirm it.", "West from Lemnos (open water)|||2026-10-05": "ECMWF and GFS disagree by 172 degrees in direction and 8 kt in wind, with ECMWF at NE 15 kt gusting 33 kt versus GFS at SW 8 kt gusting 14 kt, so the two runs describe opposite days on the same water. The upper-level flow of 33 kt from the NNW at a 5736 m 500 hPa height is consistent with the northeasterly surface solution, making the ECMWF scenario the more physically supported one. Expect either a workable breeze with gusts around 33 kt or a slack southwesterly, so carry the sail inventory for both.", "Thracian Sea (open water)|||2026-10-05": "The split here is 172 degrees in direction and 19 kt in gusts: ECMWF NE 15 kt with 33 kt gusts against GFS WSW 9 kt with 14 kt gusts. The 500 hPa chart shows 5736 m heights and 33 kt NNW flow, a pattern that feeds northerly surface wind into the Thracian Sea and argues for the ECMWF outcome. In practice this is the difference between a brisk, gusty reaching day and a near-drifting one, so plan for the windier case and be pleasantly surprised if it goes light.", "Dardaneles (E of Lemnos open water)|||2026-10-05": "This is the biggest strength split of the group at 11 kt, ECMWF NE 17 kt gusting 30 kt versus GFS NW 7 kt gusting 16 kt, with directions 86 degrees apart. With 33 kt of NNW flow aloft at a 5736 m 500 hPa height, both solutions are at least broadly northerly, so the real uncertainty is how strongly that upper flow couples to the surface in the Dardanelles approach. Assume the stronger ECMWF case for planning, since 17 kt with 30 kt gusts is a very different proposition from 7 kt.", "Agios Efstratios (S of Lemnos open water)|||2026-10-05": "ECMWF forecasts NE 16 kt gusting 31 kt while GFS forecasts SW 6 kt gusting 16 kt, a 176 degree direction reversal and a 9 kt wind spread, so the models cannot agree on which side of the island is the lee. The 500 hPa flow of 33 kt from the NNW at 5736 m supports the northerly regime continuing, which makes the ECMWF northeasterly the more likely of the two. Choose your anchorage or start line late, because the sheltered side flips completely between the two scenarios.", "Mount Athos (N approach)|||2026-10-04": "Direction is broadly agreed here, ENE versus E with only 27 degrees of spread, but strength is not: ECMWF has 16 kt gusting 34 kt while GFS has 10 kt gusting 24 kt. The 500 hPa analysis for the day shows 5735 m heights with a strong 37 kt northerly flow aloft and t500 of -12.2 C, an actively mixing northerly pattern that supports the higher ECMWF numbers. Expect an easterly breeze on the north approach with gusts plausibly in the low 30s, which near Athos means real acceleration and downdraft potential.", "Mount Athos (N approach)|||2026-10-05": "The wind speeds are similar and modest, 10 kt from ECMWF against 6 kt from GFS, but the direction differs by 149 degrees, ENE versus SSW, and the gusts by 14 kt (30 kt versus 15 kt). The 500 hPa flow is still 33 kt from the NNW at 5736 m, which favours the easterly component solution and the gustier ECMWF profile over a light southerly. Practically the base breeze is light either way, but the ECMWF run implies squally 30 kt gusts off the high ground, so do not be caught overcanvassed close under the peak."}, "dirPerModel": {"Keramoti / Thassos (E of Thassos open water)": [null, null, "NE / WSW", null, null, null, null], "Samothrace (S of Samothrace open water)": [null, null, "NE / W", null, null, null, null], "West from Lemnos (open water)": [null, null, "NE / SW", null, null, null, null], "Thracian Sea (open water)": [null, null, "NE / WSW", null, null, null, null], "Dardaneles (E of Lemnos open water)": [null, null, "NE / NW", null, null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, null, "NE / SW", null, null, null, null], "Mount Athos (N approach)": [null, null, "ENE / SSW", null, null, null, null]}}, "wave": {"available": false, "label": "Wave height", "unit": "m", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "period": {"available": false, "label": "Wave period", "unit": "s", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "wave_dir": {"available": false, "label": "Wave direction", "unit": "", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "poseidon_wind": {"available": false, "label": "Wind (mean)", "unit": "kt", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_wind_max": {"available": false, "label": "Wind (max)", "unit": "kt", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_rain": {"available": false, "label": "Rain", "unit": "mm", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_temp_lo": {"available": false, "label": "Temp (low)", "unit": "°C", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_temp_hi": {"available": false, "label": "Temp (high)", "unit": "°C", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_wave": {"available": false, "label": "Wave height", "unit": "m", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_wind_dir": {"available": false, "label": "Wind direction", "unit": "", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}, "poseidon_wave_dir": {"available": false, "label": "Wave direction", "unit": "", "opensNote": "HCMR Poseidon (unofficial) opens ~2026-09-18 — actual horizon is much shorter, rerun closer to the trip"}}, "sailingSummary": "Overall the week opens firmly in a late-season Etesian-type regime: a steady northeasterly across the whole cruising area, blowing 36-42 degrees at almost every spot on 3 and 4 October, with the 500 hPa chart backing that up. Geopotential heights sit at 5747, 5735 and 5736 m, below the 5850 m ridge threshold but not deeply troughed, with the steering jet at 26-37 kt out of the NE veering N then NNW. That is a flat, slightly cyclonic northerly pattern, not a blocking high, so the surface gradient is real but progressively relaxing. Temperatures at 500 hPa of -12 to -14 C are marginally unstable, enough for the odd shower cell but no organised convection. The practical shape of the week in the data we have is: strong and steady Saturday, still strong but easing Sunday, then a collapse and directional scramble on Monday 5 October. Note the dataset only extends to 5 October; 6-9 October has no current-run coverage.\n\nThe roughest water is unambiguously the southern and eastern open channels on 3 October. Dardanelles (E of Lemnos) runs 22.1 kt mean with a 35.8 kt gust, Agios Efstratios 21.4 kt gusting 34.4, West from Lemnos 19.1 kt gusting 34.8, Samothrace 19.2 gusting 32.7. The 4th eases only marginally in the mean (Dardanelles 19.8, Agios Efstratios 18.4, West Lemnos 17.4) yet carries the single highest gust of the period, 37.3 kt west of Lemnos. The calmest readings are Mount Athos N approach, 11.4 kt on the 3rd and 8.1 kt on the 5th, and Keramoti/Thassos at 9.3 kt on the 5th. By the 5th everything drops into the 8-12 kt band, with Athos and Keramoti the softest corners of the area. Wave data is unavailable for every spot and day this run, so judge sea state from wind and fetch: with two days of 18-22 kt NE over the long fetch from the Dardanelles, expect a well-developed short northeasterly sea in the Lemnos channels by Sunday even as the wind eases.\n\nRain is essentially a non-issue: the wettest cell is Dardanelles on 4 October at 0.87 mm, then West Lemnos 0.5 mm on the 5th; everything else is a few tenths or zero. Temperatures are remarkably flat, lows 18.4-20.1 and highs 21.2-22.8, a diurnal range of only about 3 degrees. The real caveat is 5 October, flagged for both wind and direction at six of seven spots. The spread is large and systematic: ECMWF holds 12.0-17.3 kt from the NE (46-55 degrees) while GFS collapses to 6.3-8.7 kt and swings to S/SW (210-320 degrees). Dardanelles is the extreme case, 17.3 versus 6.7 kt. ICON contributed nothing this run, so the consensus is a two-model average of two quite different solutions. Treat Monday's blended 11-12 kt and its odd directions (136 degrees at Lemnos and Athos, 324-340 degrees at Keramoti and Samothrace) as an artefact of averaging opposites: plan for either 15 kt NE or 7 kt variable, not for the mean. Keramoti and Athos on the 4th are flagged for the same reason, ECMWF 17.3 and 16.4 against GFS 9.8.\n\nLocal effects show up clearly. The Lemnos channels running 3-5 kt above the sheltered coastal spots on the 3rd and 4th matches the known pattern, and the Saros funnelling supports treating the Dardanelles 22 kt as a floor rather than a ceiling in a NE gradient. Mount Athos is the standout: mean wind of only 11.4 kt on the 3rd but a 31.3 kt gust in the kernel, and 13.1 kt with 33.6 kt gusts on the 4th, exactly the gap/katabatic signature the terrain produces.\n\nCompared with the previous run, the medium-range numbers for 3-5 October are effectively unchanged, the same ECMWF and GFS fields reproduced, which is genuine confirmation rather than news. What has changed is the contrast with that run's EC46 ensemble mean, which was much softer and wetter: Keramoti 8.9 kt against 16.5 now, Athos 3.9 against 11.4, Dardanelles 18.3 against 22.1, and 1-1.5 mm daily rain against near-zero. The smoothed long-range picture undersold this event; plan on the windier, drier deterministic solution.\n\nPractically: leave early on the 3rd with a reef in and run the NE downwind while it is steady. Keep the Dardanelles and Agios Efstratios legs for 3-4 October only if you want the breeze, and cross them on port reach rather than beating. Use Keramoti/Thassos and the Thracian Sea as the bolt-holes; they are consistently 4-6 kt lighter. Approach Athos with reefed main regardless of the 8-11 kt mean. Reserve 5 October as a flexible day, be rigged for 15 kt NE but ready to motor, and re-check the 6-9 October window once data arrives, since the prior ensemble hinted at continued easing with rain returning around the 9th.", "pageTitle": "North Aegean Forecast", "eyebrow": "North Aegean · sailing forecast 3-9 Oct", "heading": "Thassos · Samothrace · Lemnos · Athos", "labels": {"Keramoti / Thassos (E of Thassos open water)": {"short": "Thassos", "shortMobile": "Tha"}, "Samothrace (S of Samothrace open water)": {"short": "Samothrace", "shortMobile": "Sam"}, "West from Lemnos (open water)": {"short": "Lemnos", "shortMobile": "Lem"}, "Thracian Sea (open water)": {"short": "Thracian Sea", "shortMobile": "Thr"}, "Dardaneles (E of Lemnos open water)": {"short": "Dardaneles", "shortMobile": "Dar"}, "Agios Efstratios (S of Lemnos open water)": {"short": "Ag. Efstratios", "shortMobile": "Efs"}, "Mount Athos (N approach)": {"short": "Mount Athos", "shortMobile": "Ath"}}, "mediumModelsLabel": "ECMWF IFS / NOAA GFS / DWD ICON", "spreadWindKt": 6, "spreadDirDeg": 45, "dirFlagMinWindKt": 5, "charts": []}
+{"dates": ["2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"], "runStamp": "2026-09-22T14:55+03:00", "places": ["Keramoti / Thassos (E of Thassos open water)", "Samothrace (S of Samothrace open water)", "West from Lemnos (open water)", "Thracian Sea (open water)", "Dardaneles (E of Lemnos open water)", "Agios Efstratios (S of Lemnos open water)", "Mount Athos (N approach)"], "tiers": [{"name": "EC46 extended range", "state": "live", "note": "51-member ensemble mean"}, {"name": "Medium-range consensus", "state": "live", "note": "ECMWF IFS / NOAA GFS / DWD ICON"}, {"name": "Sea state", "state": "live", "note": "Open-Meteo Marine"}, {"name": "ECMWF synoptic charts", "state": "pending", "note": "opens ~9-10 days out"}, {"name": "Poseidon regional (unofficial)", "state": "pending", "note": "horizon ~5-6 days — rerun closer to the trip"}], "params": {"wind_mean": {"available": true, "label": "Wind (mean)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [8.8, 10.3, 14.3, 14.8, 4.5, 4.6, 4.5], "Samothrace (S of Samothrace open water)": [10.7, 14.6, 17.3, 19.3, 6.8, 7.2, 7.2], "West from Lemnos (open water)": [9.5, 12.5, 15.4, 14.7, 6.6, 6.8, 6.3], "Thracian Sea (open water)": [11.0, 12.4, 17.0, 17.8, 4.5, 4.6, 4.5], "Dardaneles (E of Lemnos open water)": [14.1, 16.5, 19.0, 19.9, 8.4, 8.4, 8.1], "Agios Efstratios (S of Lemnos open water)": [11.5, 14.9, 17.5, 17.4, 7.7, 7.8, 7.4], "Mount Athos (N approach)": [5.5, 8.8, 13.6, 9.9, 2.6, 2.5, 2.7]}, "tripExtremes": {"lowValue": 2.5, "lowPlace": "Mount Athos (N approach)", "highValue": 19.9, "highPlace": "Dardaneles (E of Lemnos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [4.5, 14.8], "Samothrace (S of Samothrace open water)": [6.8, 19.3], "West from Lemnos (open water)": [6.3, 15.4], "Thracian Sea (open water)": [4.5, 17.8], "Dardaneles (E of Lemnos open water)": [8.1, 19.9], "Agios Efstratios (S of Lemnos open water)": [7.4, 17.5], "Mount Athos (N approach)": [2.5, 13.6]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached", "flags": {"Keramoti / Thassos (E of Thassos open water)": ["wind", "wind", "wind", "wind+dir", "", "", ""], "Samothrace (S of Samothrace open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "West from Lemnos (open water)": ["", "wind", "wind", "wind", "", "", ""], "Thracian Sea (open water)": ["wind", "wind", "wind+dir", "wind+dir", "", "", ""], "Dardaneles (E of Lemnos open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "Agios Efstratios (S of Lemnos open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "Mount Athos (N approach)": ["", "wind+dir", "wind", "", "", "", ""]}, "windSpan": {"Keramoti / Thassos (E of Thassos open water)": [[5.777777777777779, 11.899999999999999], [4.311111111111111, 16.299999999999997], [9.622222222222222, 19.03333333333333], [11.644444444444444, 17.944444444444443], null, null, null], "Samothrace (S of Samothrace open water)": [[8.622222222222222, 12.811111111111112], [7.3999999999999995, 21.799999999999997], [9.377777777777778, 25.133333333333333], [13.700000000000001, 24.833333333333332], null, null, null], "West from Lemnos (open water)": [[6.955555555555557, 12.11111111111111], [6.144444444444444, 18.844444444444445], [6.277777777777777, 24.43333333333333], [5.733333333333334, 23.577777777777776], null, null, null], "Thracian Sea (open water)": [[7.188888888888889, 14.77777777777778], [5.322222222222222, 19.5], [10.8, 23.200000000000003], [13.199999999999998, 22.466666666666665], null, null, null], "Dardaneles (E of Lemnos open water)": [[11.122222222222224, 16.98888888888889], [9.555555555555555, 23.477777777777774], [11.666666666666668, 26.322222222222223], [13.244444444444444, 26.51111111111111], null, null, null], "Agios Efstratios (S of Lemnos open water)": [[8.7, 14.233333333333333], [7.377777777777778, 22.422222222222224], [8.88888888888889, 26.144444444444442], [9.277777777777779, 25.566666666666663], null, null, null], "Mount Athos (N approach)": [[4.944444444444445, 6.066666666666666], [5.2444444444444445, 12.266666666666667], [9.466666666666667, 17.72222222222222], [7.466666666666667, 12.266666666666666], null, null, null]}, "gustSpan": {"Keramoti / Thassos (E of Thassos open water)": [[18.9, 25.7], [15.0, 28.4], [28.0, 28.6], [26.2, 36.7], null, null, null], "Samothrace (S of Samothrace open water)": [[23.3, 24.5], [18.9, 31.1], [25.9, 30.5], [29.7, 33.0], null, null, null], "West from Lemnos (open water)": [[18.1, 24.7], [15.7, 29.4], [24.9, 29.9], [28.4, 34.4], null, null, null], "Thracian Sea (open water)": [[20.0, 25.7], [17.5, 30.1], [27.6, 30.1], [28.6, 35.8], null, null, null], "Dardaneles (E of Lemnos open water)": [[21.2, 26.8], [17.5, 32.3], [28.0, 32.3], [31.1, 33.0], null, null, null], "Agios Efstratios (S of Lemnos open water)": [[18.5, 24.9], [15.6, 33.0], [29.5, 31.9], [30.7, 31.3], null, null, null], "Mount Athos (N approach)": [[13.0, 17.1], [16.7, 25.5], [25.7, 31.7], [22.4, 31.7], null, null, null]}, "dirSpread": {"Keramoti / Thassos (E of Thassos open water)": [3, null, 42, 62, null, null, null], "Samothrace (S of Samothrace open water)": [2, 7, 89, 72, null, null, null], "West from Lemnos (open water)": [8, 22, 34, 39, null, null, null], "Thracian Sea (open water)": [18, 12, 69, 69, null, null, null], "Dardaneles (E of Lemnos open water)": [2, 2, 116, 89, null, null, null], "Agios Efstratios (S of Lemnos open water)": [4, 3, 119, 107, null, null, null], "Mount Athos (N approach)": [null, 47, 17, 36, null, null, null]}, "perModel": {"Keramoti / Thassos (E of Thassos open water)": [{"ECMWF IFS": {"wind": 6, "dir": "NE", "gust": 19}, "NOAA GFS": {"wind": 12, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 4, "dir": "ENE", "gust": 15}, "NOAA GFS": {"wind": 16, "dir": "NE", "gust": 28}}, {"ECMWF IFS": {"wind": 10, "dir": "E", "gust": 28}, "NOAA GFS": {"wind": 19, "dir": "NE", "gust": 29}}, {"ECMWF IFS": {"wind": 12, "dir": "ESE", "gust": 37}, "NOAA GFS": {"wind": 18, "dir": "NE", "gust": 26}}, null, null, null], "Samothrace (S of Samothrace open water)": [null, {"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 19}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 31}}, {"ECMWF IFS": {"wind": 9, "dir": "SE", "gust": 26}, "NOAA GFS": {"wind": 25, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 14, "dir": "ESE", "gust": 33}, "NOAA GFS": {"wind": 25, "dir": "NE", "gust": 30}}, null, null, null], "West from Lemnos (open water)": [null, {"ECMWF IFS": {"wind": 6, "dir": "ENE", "gust": 16}, "NOAA GFS": {"wind": 19, "dir": "NE", "gust": 29}}, {"ECMWF IFS": {"wind": 6, "dir": "E", "gust": 25}, "NOAA GFS": {"wind": 24, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 6, "dir": "E", "gust": 34}, "NOAA GFS": {"wind": 24, "dir": "NE", "gust": 28}}, null, null, null], "Thracian Sea (open water)": [{"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 20}, "NOAA GFS": {"wind": 15, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 5, "dir": "ENE", "gust": 18}, "NOAA GFS": {"wind": 20, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 11, "dir": "ESE", "gust": 28}, "NOAA GFS": {"wind": 23, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 13, "dir": "ESE", "gust": 36}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 29}}, null, null, null], "Dardaneles (E of Lemnos open water)": [null, {"ECMWF IFS": {"wind": 10, "dir": "NE", "gust": 18}, "NOAA GFS": {"wind": 23, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 12, "dir": "SSE", "gust": 28}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 13, "dir": "SE", "gust": 31}, "NOAA GFS": {"wind": 27, "dir": "NE", "gust": 33}}, null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, {"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 16}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 33}}, {"ECMWF IFS": {"wind": 9, "dir": "SSE", "gust": 30}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 9, "dir": "SSE", "gust": 31}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 31}}, null, null, null], "Mount Athos (N approach)": [null, {"ECMWF IFS": {"wind": 5, "dir": "E", "gust": 17}, "NOAA GFS": {"wind": 12, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 9, "dir": "NE", "gust": 32}, "NOAA GFS": {"wind": 18, "dir": "ENE", "gust": 26}}, null, null, null, null]}, "disagreeNotes": {"Keramoti / Thassos (E of Thassos open water)|||2026-10-03": "Both models agree on the direction (NE, only 3 degrees apart), so the split is purely strength: ECMWF 6 kt with 19 kt gusts versus GFS 12 kt with 26 kt gusts. This is the most unstable day of the run (z500 5734 m, t500 -15.3 C, CAPE 450 J/kg and SST-T850 of 13.2 C at the waterspout threshold), so shower cells could locally deliver the GFS-style gusts even if the mean wind is closer to ECMWF's 6 kt. Plan for a light NE sail but keep a reef ready and watch for isolated shower gusts into the mid-20s.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-04": "The 12 kt spread is the whole story here: ECMWF gives 4 kt ENE with 15 kt gusts (motoring), GFS gives 16 kt NE with 28 kt gusts (one reef), while direction is essentially agreed. With heights rising to 5748 m, t500 -14.9 C and CAPE down to 250 J/kg, there is little convective mechanism left to explain big gusts, so the difference is simply how tight the surface gradient is. Rig for the stronger case and accept you may end up motoring.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-05": "Means differ by 9 kt (ECMWF 10 kt E, GFS 19 kt NE, 42 degrees apart) yet the gusts are nearly identical at 28 and 29 kt, so both models expect gusty periods and only disagree on how steady the flow is between them. CAPE has collapsed to 50 J/kg under a building ridge (z500 5783 m, t500 -11.6 C), so those gusts are gradient-driven rather than shower-driven and will be persistent rather than isolated. Prepare for 28-29 kt gusts regardless of which mean verifies.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-06": "This is a double split: ECMWF has 12 kt ESE gusting 37 kt, GFS has 18 kt NE gusting 26 kt, 62 degrees apart. With the ridge at its strongest (z500 5807 m, t500 -10.5 C) and CAPE only 30 J/kg, there is nothing to support ECMWF's 37 kt gust on a 12 kt mean, so GFS's steadier NE fits the stable pattern better. The direction matters for shelter east of Thassos, since NE and ESE put the lee on opposite sides, so hold the route choice until closer to the day.", "Samothrace (S of Samothrace open water)|||2026-10-04": "Direction is agreed (NE, 7 degrees apart) and the argument is strength only: ECMWF 7 kt gusting 19 kt versus GFS 22 kt gusting 31 kt, a 14 kt spread. With CAPE down to 250 J/kg and heights rising to 5748 m the pattern is stabilising, so this is a gradient-strength disagreement rather than a convective one. South of Samothrace is open water, so plan for the reefed 22 kt case and be pleased if it comes in lighter.", "Samothrace (S of Samothrace open water)|||2026-10-05": "The models are almost opposed: ECMWF 9 kt SE, GFS 25 kt NE, 89 degrees apart, but both give gusts of 26-30 kt. Under a building ridge (z500 5783 m, t500 -11.6 C) with CAPE at just 50 J/kg, a sustained NE gradient flow is the more coherent solution than a light SE drift that somehow gusts 26 kt. That 89 degree flip changes which side of Samothrace is the lee shore, so keep both anchorage options open and expect gusts near 30 kt.", "Samothrace (S of Samothrace open water)|||2026-10-06": "ECMWF has 14 kt ESE gusting 33 kt, GFS 25 kt NE gusting 30 kt, so the gusts agree within 3 kt while the means differ by 11 kt and the directions by 72 degrees. With CAPE at 30 J/kg under a 5807 m ridge and t500 only -10.5 C, gusts near 30 kt cannot be convective and imply a real gradient wind, which favours the GFS 25 kt NE. Sail it as a 25 kt NE day with 30 kt gusts and NE-driven fetch south of the island.", "West from Lemnos (open water)|||2026-10-04": "ECMWF 6 kt ENE gusting 16 kt versus GFS 19 kt NE gusting 29 kt is a 13 kt mean and 14 kt gust spread, with direction broadly agreed within 22 degrees. CAPE of 250 J/kg and t500 of -14.9 C allow some modest shower gustiness but not the whole difference, which is really about gradient strength. Open water west of Lemnos gives no shelter, so plan for the 19 kt case and shorten sail early.", "West from Lemnos (open water)|||2026-10-05": "This is the largest strength split in the table: ECMWF 6 kt E against GFS 24 kt NE, 18 kt apart, yet the gusts are close (25 and 30 kt). With CAPE at 50 J/kg under a 5783 m ridge there is no convective way to get 25 kt gusts out of a 6 kt mean, so the GFS solution is the internally consistent one. Plan on 24 kt NE with 30 kt gusts on this exposed leg.", "West from Lemnos (open water)|||2026-10-06": "ECMWF stays at 6 kt E but with 34 kt gusts, GFS has 24 kt NE gusting 28 kt, an 18 kt mean split and 39 degrees of direction spread. A gust nearly six times the mean is not supportable with CAPE at 30 J/kg and a strong ridge overhead (z500 5807 m, t500 -10.5 C), so lean toward the steady NE gradient solution. Treat this as a 24 kt NE open-water passage with gusts near 30 kt.", "Thracian Sea (open water)|||2026-10-03": "Direction is settled at NE (18 degrees spread) and the split is 7 kt versus 15 kt, gusting 20 against 26 kt. This is the day with the most instability in the run (CAPE 450 J/kg, t500 -15.3 C, SST-T850 13.2 C which is at the waterspout threshold), so the wind may arrive in shower-driven pulses rather than as a steady breeze. Plan for mid-teens NE, keep a lookout for cells and their gusts to the mid-20s.", "Thracian Sea (open water)|||2026-10-04": "ECMWF 5 kt ENE gusting 18 kt versus GFS 20 kt NE gusting 30 kt is a 14 kt mean and 13 kt gust spread, with direction agreed within 12 degrees. With CAPE halved to 250 J/kg and heights rising to 5748 m, the convective contribution is fading and the disagreement is about gradient tightness. Prepare for a reefed 20 kt NE crossing rather than the drifting scenario.", "Thracian Sea (open water)|||2026-10-05": "The direction split is 69 degrees (ECMWF ESE 11 kt, GFS NE 23 kt) but the gusts match almost exactly at 28 and 30 kt. With CAPE at 50 J/kg and a ridge at 5783 m, those matching gusts must come from the pressure gradient, which supports the stronger NE solution. Expect a gusty open-water day near 30 kt and hold off on committing to a downwind or upwind route.", "Thracian Sea (open water)|||2026-10-06": "ECMWF gives 13 kt ESE gusting 36 kt, GFS 22 kt NE gusting 29 kt, so both a 9 kt mean split and 69 degrees of direction spread. CAPE of 30 J/kg under a 5807 m ridge with t500 -10.5 C gives no convective basis for a 36 kt gust on 13 kt of mean wind, so the GFS steady NE is the better planning assumption. Budget for 22 kt NE with gusts close to 30 kt across the open Thracian Sea.", "Dardaneles (E of Lemnos open water)|||2026-10-04": "Direction is effectively agreed (NE, 2 degrees apart) so the only question is strength: ECMWF 10 kt gusting 18 kt versus GFS 23 kt gusting 32 kt, a 13-15 kt spread. With CAPE down to 250 J/kg and the ridge building to 5748 m, this is a gradient disagreement, not a squall disagreement. On the approach east of Lemnos plan for 23 kt NE and 32 kt gusts, with the light case as the bonus.", "Dardaneles (E of Lemnos open water)|||2026-10-05": "This is the biggest directional disagreement in the table at 116 degrees: ECMWF 12 kt SSE, GFS 26 kt NE, yet both gust 28-32 kt. With CAPE at only 50 J/kg beneath a 5783 m ridge, a strong sustained NE outflow fits the stable pattern far better than a light SSE breeze with 28 kt gusts. A 116 degree flip is the difference between a beat and a run on this leg, so keep departure timing and routing flexible and be ready for 30 kt gusts.", "Dardaneles (E of Lemnos open water)|||2026-10-06": "Gusts agree within 2 kt (31 and 33 kt) while the means differ by 13 kt and the directions by 89 degrees (ECMWF 13 kt SE, GFS 27 kt NE). With CAPE at 30 J/kg and t500 only -10.5 C under a 5807 m ridge, gusts above 30 kt have to be gradient-driven, which argues strongly for the 27 kt NE solution. Treat this as near-gale NE conditions in the open water east of Lemnos and plan sail area accordingly.", "Agios Efstratios (S of Lemnos open water)|||2026-10-04": "Direction is agreed at NE within 3 degrees, but the gust spread of 17 kt is the largest in the table: ECMWF 7 kt gusting 16 kt against GFS 22 kt gusting 33 kt. CAPE of 250 J/kg and t500 -14.9 C allow some shower-enhanced gusts but the bulk of the difference is gradient strength. Because the outcome ranges from a pleasant NE sail to 33 kt gusts in open water south of Lemnos, rig conservatively.", "Agios Efstratios (S of Lemnos open water)|||2026-10-05": "The direction spread is 119 degrees (ECMWF 9 kt SSE, GFS 26 kt NE) while the gusts differ by only 2 kt at 30 and 32 kt. Under a 5783 m ridge with CAPE at 50 J/kg, 30 kt gusts cannot be shower-driven, so the sustained 26 kt NE scenario is the more physically consistent one. Assume a strong NE day with 30 kt gusts and treat the SSE option as unlikely when planning shelter.", "Agios Efstratios (S of Lemnos open water)|||2026-10-06": "The two models give identical 31 kt gusts but split 9 kt SSE against 26 kt NE, a 107 degree direction difference. With CAPE at 30 J/kg and a strong ridge overhead (z500 5807 m, t500 -10.5 C), an agreed 31 kt gust points to a real gradient wind, which undermines ECMWF's 9 kt mean. Plan for 26 kt NE gusting 31 kt in the open water south of Lemnos.", "Mount Athos (N approach)|||2026-10-04": "These are the lightest winds in the table but they still disagree meaningfully: ECMWF 5 kt E gusting 17 kt, GFS 12 kt NE gusting 26 kt, 47 degrees apart. With CAPE at 250 J/kg and t500 -14.9 C there is still enough instability for isolated shower gusts toward the GFS values even in a light mean flow. On the north approach the 47 degree split decides whether you are in the lee or exposed, so keep the approach decision late and be ready for gusts into the mid-20s.", "Mount Athos (N approach)|||2026-10-05": "Direction is broadly agreed (NE versus ENE, 17 degrees) and the means split 9 kt against 18 kt, but here ECMWF is the gustier model at 32 kt against GFS's 26 kt. With CAPE down to 50 J/kg under a 5783 m ridge, those gusts are not convective, so treat the 32 kt figure as a local acceleration risk on the approach rather than a shower squall. Expect around 18 kt of NE-ENE breeze and be prepared for gusts to 30 kt.", "Thracian Sea (open water)|||2026-10-03 ": ""}}, "wind_max": {"available": true, "label": "Wind (max)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [13.0, 15.3, 17.5, 22.0, 7.0, 7.0, 6.9], "Samothrace (S of Samothrace open water)": [15.4, 18.9, 20.8, 23.2, 9.8, 10.5, 10.2], "West from Lemnos (open water)": [13.1, 18.1, 19.6, 19.5, 9.2, 10.1, 9.3], "Thracian Sea (open water)": [15.7, 18.0, 21.0, 23.1, 7.0, 7.0, 6.9], "Dardaneles (E of Lemnos open water)": [17.9, 19.6, 22.5, 22.9, 9.3, 10.2, 9.7], "Agios Efstratios (S of Lemnos open water)": [15.2, 18.4, 22.1, 22.1, 9.3, 10.2, 9.5], "Mount Athos (N approach)": [9.2, 15.1, 18.8, 15.2, 3.8, 4.0, 4.0]}, "tripExtremes": {"lowValue": 3.8, "lowPlace": "Mount Athos (N approach)", "highValue": 23.2, "highPlace": "Samothrace (S of Samothrace open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [6.9, 22.0], "Samothrace (S of Samothrace open water)": [9.8, 23.2], "West from Lemnos (open water)": [9.2, 19.6], "Thracian Sea (open water)": [6.9, 23.1], "Dardaneles (E of Lemnos open water)": [9.3, 22.9], "Agios Efstratios (S of Lemnos open water)": [9.3, 22.1], "Mount Athos (N approach)": [3.8, 18.8]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached"}, "gust": {"available": true, "label": "Gust (max)", "unit": "kt", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [25.7, 28.4, 28.6, 36.7, 14.0, 14.0, 14.8], "Samothrace (S of Samothrace open water)": [24.5, 31.1, 30.5, 33.0, 20.8, 21.2, 21.8], "West from Lemnos (open water)": [24.7, 29.4, 29.9, 34.4, 18.5, 19.0, 19.8], "Thracian Sea (open water)": [25.7, 30.1, 30.1, 35.8, 14.0, 14.0, 14.8], "Dardaneles (E of Lemnos open water)": [26.8, 32.3, 32.3, 33.0, 22.2, 22.9, 22.0], "Agios Efstratios (S of Lemnos open water)": [24.9, 33.0, 31.9, 31.3, 20.8, 22.0, 21.2], "Mount Athos (N approach)": [17.1, 25.5, 31.7, 31.7, 10.3, 10.1, 10.7]}, "tripExtremes": {"lowValue": 10.1, "lowPlace": "Mount Athos (N approach)", "highValue": 36.7, "highPlace": "Keramoti / Thassos (E of Thassos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [14.0, 36.7], "Samothrace (S of Samothrace open water)": [20.8, 33.0], "West from Lemnos (open water)": [18.5, 34.4], "Thracian Sea (open water)": [14.0, 35.8], "Dardaneles (E of Lemnos open water)": [22.0, 33.0], "Agios Efstratios (S of Lemnos open water)": [20.8, 33.0], "Mount Athos (N approach)": [10.1, 31.7]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached"}, "rain": {"available": true, "label": "Rain", "unit": "mm", "decimals": 1, "series": {"Keramoti / Thassos (E of Thassos open water)": [0.0, 0.0, 30.6, 30.3, 2.0, 2.5, 2.7], "Samothrace (S of Samothrace open water)": [0.0, 0.0, 15.0, 17.8, 2.0, 1.8, 2.2], "West from Lemnos (open water)": [0.0, 0.0, 6.8, 26.3, 1.6, 1.7, 1.9], "Thracian Sea (open water)": [0.0, 0.0, 13.8, 15.8, 2.0, 2.5, 2.7], "Dardaneles (E of Lemnos open water)": [0.0, 0.0, 12.8, 31.0, 1.7, 1.7, 2.1], "Agios Efstratios (S of Lemnos open water)": [0.0, 0.0, 11.2, 21.3, 1.5, 1.5, 2.3], "Mount Athos (N approach)": [0.5, 0.3, 15.9, 29.2, 3.5, 3.3, 3.7]}, "tripExtremes": {"lowValue": 0.0, "lowPlace": "Keramoti / Thassos (E of Thassos open water)", "highValue": 31.0, "highPlace": "Dardaneles (E of Lemnos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [0.0, 30.6], "Samothrace (S of Samothrace open water)": [0.0, 17.8], "West from Lemnos (open water)": [0.0, 26.3], "Thracian Sea (open water)": [0.0, 15.8], "Dardaneles (E of Lemnos open water)": [0.0, 31.0], "Agios Efstratios (S of Lemnos open water)": [0.0, 21.3], "Mount Athos (N approach)": [0.3, 29.2]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached"}, "temp_lo": {"available": true, "label": "Temp (low)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [19.4, 19.4, 17.6, 17.6, 20.6, 20.4, 20.2], "Samothrace (S of Samothrace open water)": [20.1, 20.0, 18.6, 18.2, 19.7, 19.8, 19.4], "West from Lemnos (open water)": [20.8, 20.4, 19.0, 18.4, 19.4, 19.4, 19.2], "Thracian Sea (open water)": [20.4, 20.1, 18.6, 18.5, 20.6, 20.4, 20.2], "Dardaneles (E of Lemnos open water)": [19.5, 19.4, 18.8, 18.5, 19.4, 19.6, 19.3], "Agios Efstratios (S of Lemnos open water)": [20.2, 20.0, 18.9, 18.6, 19.4, 19.4, 19.2], "Mount Athos (N approach)": [20.5, 20.7, 18.7, 18.0, 17.8, 17.4, 17.4]}, "tripExtremes": {"lowValue": 17.4, "lowPlace": "Mount Athos (N approach)", "highValue": 20.8, "highPlace": "West from Lemnos (open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [17.6, 20.6], "Samothrace (S of Samothrace open water)": [18.2, 20.1], "West from Lemnos (open water)": [18.4, 20.8], "Thracian Sea (open water)": [18.5, 20.6], "Dardaneles (E of Lemnos open water)": [18.5, 19.6], "Agios Efstratios (S of Lemnos open water)": [18.6, 20.2], "Mount Athos (N approach)": [17.4, 20.7]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached"}, "temp_hi": {"available": true, "label": "Temp (high)", "unit": "°C", "decimals": 0, "series": {"Keramoti / Thassos (E of Thassos open water)": [22.4, 22.6, 21.3, 20.4, 22.9, 23.0, 22.8], "Samothrace (S of Samothrace open water)": [22.4, 22.1, 21.1, 20.2, 21.9, 21.9, 21.9], "West from Lemnos (open water)": [22.3, 22.0, 21.3, 20.1, 20.9, 21.0, 20.9], "Thracian Sea (open water)": [22.6, 22.6, 21.4, 20.4, 22.9, 23.0, 22.8], "Dardaneles (E of Lemnos open water)": [21.9, 21.8, 20.9, 20.5, 21.4, 21.3, 21.4], "Agios Efstratios (S of Lemnos open water)": [22.1, 21.8, 20.7, 20.2, 20.8, 20.9, 20.8], "Mount Athos (N approach)": [22.4, 22.8, 21.6, 20.2, 22.0, 22.1, 21.7]}, "tripExtremes": {"lowValue": 20.1, "lowPlace": "West from Lemnos (open water)", "highValue": 23.0, "highPlace": "Keramoti / Thassos (E of Thassos open water)"}, "placeRange": {"Keramoti / Thassos (E of Thassos open water)": [20.4, 23.0], "Samothrace (S of Samothrace open water)": [20.2, 22.4], "West from Lemnos (open water)": [20.1, 22.3], "Thracian Sea (open water)": [20.4, 23.0], "Dardaneles (E of Lemnos open water)": [20.5, 21.9], "Agios Efstratios (S of Lemnos open water)": [20.2, 22.1], "Mount Athos (N approach)": [20.2, 22.8]}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached"}, "wind_dir": {"available": true, "type": "direction", "label": "Wind direction", "unit": "", "series": {"Keramoti / Thassos (E of Thassos open water)": ["NE", "NE", "ENE", "E", "ENE", "ENE", "ENE"], "Samothrace (S of Samothrace open water)": ["NE", "NE", "E", "E", "ENE", "ENE", "ENE"], "West from Lemnos (open water)": ["NE", "NE", "ENE", "ENE", "ENE", "ENE", "ENE"], "Thracian Sea (open water)": ["NE", "NE", "E", "E", "ENE", "ENE", "ENE"], "Dardaneles (E of Lemnos open water)": ["NNE", "NE", "E", "E", "NE", "NE", "NE"], "Agios Efstratios (S of Lemnos open water)": ["NNE", "NE", "ESE", "E", "NE", "NE", "NE"], "Mount Athos (N approach)": ["ENE", "ENE", "ENE", "NE", "ENE", "ENE", "ENE"]}, "predominant": {"Keramoti / Thassos (E of Thassos open water)": "ENE", "Samothrace (S of Samothrace open water)": "ENE", "West from Lemnos (open water)": "ENE", "Thracian Sea (open water)": "ENE", "Dardaneles (E of Lemnos open water)": "ENE", "Agios Efstratios (S of Lemnos open water)": "ENE", "Mount Athos (N approach)": "ENE"}, "sourceLabel": "Medium-range consensus (ECMWF IFS / NOAA GFS / DWD ICON); EC46 where medium-range hasn't reached", "flags": {"Keramoti / Thassos (E of Thassos open water)": ["wind", "wind", "wind", "wind+dir", "", "", ""], "Samothrace (S of Samothrace open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "West from Lemnos (open water)": ["", "wind", "wind", "wind", "", "", ""], "Thracian Sea (open water)": ["wind", "wind", "wind+dir", "wind+dir", "", "", ""], "Dardaneles (E of Lemnos open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "Agios Efstratios (S of Lemnos open water)": ["", "wind", "wind+dir", "wind+dir", "", "", ""], "Mount Athos (N approach)": ["", "wind+dir", "wind", "", "", "", ""]}, "dirSpread": {"Keramoti / Thassos (E of Thassos open water)": [3, null, 42, 62, null, null, null], "Samothrace (S of Samothrace open water)": [2, 7, 89, 72, null, null, null], "West from Lemnos (open water)": [8, 22, 34, 39, null, null, null], "Thracian Sea (open water)": [18, 12, 69, 69, null, null, null], "Dardaneles (E of Lemnos open water)": [2, 2, 116, 89, null, null, null], "Agios Efstratios (S of Lemnos open water)": [4, 3, 119, 107, null, null, null], "Mount Athos (N approach)": [null, 47, 17, 36, null, null, null]}, "perModel": {"Keramoti / Thassos (E of Thassos open water)": [{"ECMWF IFS": {"wind": 6, "dir": "NE", "gust": 19}, "NOAA GFS": {"wind": 12, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 4, "dir": "ENE", "gust": 15}, "NOAA GFS": {"wind": 16, "dir": "NE", "gust": 28}}, {"ECMWF IFS": {"wind": 10, "dir": "E", "gust": 28}, "NOAA GFS": {"wind": 19, "dir": "NE", "gust": 29}}, {"ECMWF IFS": {"wind": 12, "dir": "ESE", "gust": 37}, "NOAA GFS": {"wind": 18, "dir": "NE", "gust": 26}}, null, null, null], "Samothrace (S of Samothrace open water)": [null, {"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 19}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 31}}, {"ECMWF IFS": {"wind": 9, "dir": "SE", "gust": 26}, "NOAA GFS": {"wind": 25, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 14, "dir": "ESE", "gust": 33}, "NOAA GFS": {"wind": 25, "dir": "NE", "gust": 30}}, null, null, null], "West from Lemnos (open water)": [null, {"ECMWF IFS": {"wind": 6, "dir": "ENE", "gust": 16}, "NOAA GFS": {"wind": 19, "dir": "NE", "gust": 29}}, {"ECMWF IFS": {"wind": 6, "dir": "E", "gust": 25}, "NOAA GFS": {"wind": 24, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 6, "dir": "E", "gust": 34}, "NOAA GFS": {"wind": 24, "dir": "NE", "gust": 28}}, null, null, null], "Thracian Sea (open water)": [{"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 20}, "NOAA GFS": {"wind": 15, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 5, "dir": "ENE", "gust": 18}, "NOAA GFS": {"wind": 20, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 11, "dir": "ESE", "gust": 28}, "NOAA GFS": {"wind": 23, "dir": "NE", "gust": 30}}, {"ECMWF IFS": {"wind": 13, "dir": "ESE", "gust": 36}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 29}}, null, null, null], "Dardaneles (E of Lemnos open water)": [null, {"ECMWF IFS": {"wind": 10, "dir": "NE", "gust": 18}, "NOAA GFS": {"wind": 23, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 12, "dir": "SSE", "gust": 28}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 13, "dir": "SE", "gust": 31}, "NOAA GFS": {"wind": 27, "dir": "NE", "gust": 33}}, null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, {"ECMWF IFS": {"wind": 7, "dir": "NE", "gust": 16}, "NOAA GFS": {"wind": 22, "dir": "NE", "gust": 33}}, {"ECMWF IFS": {"wind": 9, "dir": "SSE", "gust": 30}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 32}}, {"ECMWF IFS": {"wind": 9, "dir": "SSE", "gust": 31}, "NOAA GFS": {"wind": 26, "dir": "NE", "gust": 31}}, null, null, null], "Mount Athos (N approach)": [null, {"ECMWF IFS": {"wind": 5, "dir": "E", "gust": 17}, "NOAA GFS": {"wind": 12, "dir": "NE", "gust": 26}}, {"ECMWF IFS": {"wind": 9, "dir": "NE", "gust": 32}, "NOAA GFS": {"wind": 18, "dir": "ENE", "gust": 26}}, null, null, null, null]}, "gustSpan": {"Keramoti / Thassos (E of Thassos open water)": [[18.9, 25.7], [15.0, 28.4], [28.0, 28.6], [26.2, 36.7], null, null, null], "Samothrace (S of Samothrace open water)": [[23.3, 24.5], [18.9, 31.1], [25.9, 30.5], [29.7, 33.0], null, null, null], "West from Lemnos (open water)": [[18.1, 24.7], [15.7, 29.4], [24.9, 29.9], [28.4, 34.4], null, null, null], "Thracian Sea (open water)": [[20.0, 25.7], [17.5, 30.1], [27.6, 30.1], [28.6, 35.8], null, null, null], "Dardaneles (E of Lemnos open water)": [[21.2, 26.8], [17.5, 32.3], [28.0, 32.3], [31.1, 33.0], null, null, null], "Agios Efstratios (S of Lemnos open water)": [[18.5, 24.9], [15.6, 33.0], [29.5, 31.9], [30.7, 31.3], null, null, null], "Mount Athos (N approach)": [[13.0, 17.1], [16.7, 25.5], [25.7, 31.7], [22.4, 31.7], null, null, null]}, "windSpan": {"Keramoti / Thassos (E of Thassos open water)": [[5.777777777777779, 11.899999999999999], [4.311111111111111, 16.299999999999997], [9.622222222222222, 19.03333333333333], [11.644444444444444, 17.944444444444443], null, null, null], "Samothrace (S of Samothrace open water)": [[8.622222222222222, 12.811111111111112], [7.3999999999999995, 21.799999999999997], [9.377777777777778, 25.133333333333333], [13.700000000000001, 24.833333333333332], null, null, null], "West from Lemnos (open water)": [[6.955555555555557, 12.11111111111111], [6.144444444444444, 18.844444444444445], [6.277777777777777, 24.43333333333333], [5.733333333333334, 23.577777777777776], null, null, null], "Thracian Sea (open water)": [[7.188888888888889, 14.77777777777778], [5.322222222222222, 19.5], [10.8, 23.200000000000003], [13.199999999999998, 22.466666666666665], null, null, null], "Dardaneles (E of Lemnos open water)": [[11.122222222222224, 16.98888888888889], [9.555555555555555, 23.477777777777774], [11.666666666666668, 26.322222222222223], [13.244444444444444, 26.51111111111111], null, null, null], "Agios Efstratios (S of Lemnos open water)": [[8.7, 14.233333333333333], [7.377777777777778, 22.422222222222224], [8.88888888888889, 26.144444444444442], [9.277777777777779, 25.566666666666663], null, null, null], "Mount Athos (N approach)": [[4.944444444444445, 6.066666666666666], [5.2444444444444445, 12.266666666666667], [9.466666666666667, 17.72222222222222], [7.466666666666667, 12.266666666666666], null, null, null]}, "disagreeNotes": {"Keramoti / Thassos (E of Thassos open water)|||2026-10-03": "Both models agree on the direction (NE, only 3 degrees apart), so the split is purely strength: ECMWF 6 kt with 19 kt gusts versus GFS 12 kt with 26 kt gusts. This is the most unstable day of the run (z500 5734 m, t500 -15.3 C, CAPE 450 J/kg and SST-T850 of 13.2 C at the waterspout threshold), so shower cells could locally deliver the GFS-style gusts even if the mean wind is closer to ECMWF's 6 kt. Plan for a light NE sail but keep a reef ready and watch for isolated shower gusts into the mid-20s.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-04": "The 12 kt spread is the whole story here: ECMWF gives 4 kt ENE with 15 kt gusts (motoring), GFS gives 16 kt NE with 28 kt gusts (one reef), while direction is essentially agreed. With heights rising to 5748 m, t500 -14.9 C and CAPE down to 250 J/kg, there is little convective mechanism left to explain big gusts, so the difference is simply how tight the surface gradient is. Rig for the stronger case and accept you may end up motoring.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-05": "Means differ by 9 kt (ECMWF 10 kt E, GFS 19 kt NE, 42 degrees apart) yet the gusts are nearly identical at 28 and 29 kt, so both models expect gusty periods and only disagree on how steady the flow is between them. CAPE has collapsed to 50 J/kg under a building ridge (z500 5783 m, t500 -11.6 C), so those gusts are gradient-driven rather than shower-driven and will be persistent rather than isolated. Prepare for 28-29 kt gusts regardless of which mean verifies.", "Keramoti / Thassos (E of Thassos open water)|||2026-10-06": "This is a double split: ECMWF has 12 kt ESE gusting 37 kt, GFS has 18 kt NE gusting 26 kt, 62 degrees apart. With the ridge at its strongest (z500 5807 m, t500 -10.5 C) and CAPE only 30 J/kg, there is nothing to support ECMWF's 37 kt gust on a 12 kt mean, so GFS's steadier NE fits the stable pattern better. The direction matters for shelter east of Thassos, since NE and ESE put the lee on opposite sides, so hold the route choice until closer to the day.", "Samothrace (S of Samothrace open water)|||2026-10-04": "Direction is agreed (NE, 7 degrees apart) and the argument is strength only: ECMWF 7 kt gusting 19 kt versus GFS 22 kt gusting 31 kt, a 14 kt spread. With CAPE down to 250 J/kg and heights rising to 5748 m the pattern is stabilising, so this is a gradient-strength disagreement rather than a convective one. South of Samothrace is open water, so plan for the reefed 22 kt case and be pleased if it comes in lighter.", "Samothrace (S of Samothrace open water)|||2026-10-05": "The models are almost opposed: ECMWF 9 kt SE, GFS 25 kt NE, 89 degrees apart, but both give gusts of 26-30 kt. Under a building ridge (z500 5783 m, t500 -11.6 C) with CAPE at just 50 J/kg, a sustained NE gradient flow is the more coherent solution than a light SE drift that somehow gusts 26 kt. That 89 degree flip changes which side of Samothrace is the lee shore, so keep both anchorage options open and expect gusts near 30 kt.", "Samothrace (S of Samothrace open water)|||2026-10-06": "ECMWF has 14 kt ESE gusting 33 kt, GFS 25 kt NE gusting 30 kt, so the gusts agree within 3 kt while the means differ by 11 kt and the directions by 72 degrees. With CAPE at 30 J/kg under a 5807 m ridge and t500 only -10.5 C, gusts near 30 kt cannot be convective and imply a real gradient wind, which favours the GFS 25 kt NE. Sail it as a 25 kt NE day with 30 kt gusts and NE-driven fetch south of the island.", "West from Lemnos (open water)|||2026-10-04": "ECMWF 6 kt ENE gusting 16 kt versus GFS 19 kt NE gusting 29 kt is a 13 kt mean and 14 kt gust spread, with direction broadly agreed within 22 degrees. CAPE of 250 J/kg and t500 of -14.9 C allow some modest shower gustiness but not the whole difference, which is really about gradient strength. Open water west of Lemnos gives no shelter, so plan for the 19 kt case and shorten sail early.", "West from Lemnos (open water)|||2026-10-05": "This is the largest strength split in the table: ECMWF 6 kt E against GFS 24 kt NE, 18 kt apart, yet the gusts are close (25 and 30 kt). With CAPE at 50 J/kg under a 5783 m ridge there is no convective way to get 25 kt gusts out of a 6 kt mean, so the GFS solution is the internally consistent one. Plan on 24 kt NE with 30 kt gusts on this exposed leg.", "West from Lemnos (open water)|||2026-10-06": "ECMWF stays at 6 kt E but with 34 kt gusts, GFS has 24 kt NE gusting 28 kt, an 18 kt mean split and 39 degrees of direction spread. A gust nearly six times the mean is not supportable with CAPE at 30 J/kg and a strong ridge overhead (z500 5807 m, t500 -10.5 C), so lean toward the steady NE gradient solution. Treat this as a 24 kt NE open-water passage with gusts near 30 kt.", "Thracian Sea (open water)|||2026-10-03": "Direction is settled at NE (18 degrees spread) and the split is 7 kt versus 15 kt, gusting 20 against 26 kt. This is the day with the most instability in the run (CAPE 450 J/kg, t500 -15.3 C, SST-T850 13.2 C which is at the waterspout threshold), so the wind may arrive in shower-driven pulses rather than as a steady breeze. Plan for mid-teens NE, keep a lookout for cells and their gusts to the mid-20s.", "Thracian Sea (open water)|||2026-10-04": "ECMWF 5 kt ENE gusting 18 kt versus GFS 20 kt NE gusting 30 kt is a 14 kt mean and 13 kt gust spread, with direction agreed within 12 degrees. With CAPE halved to 250 J/kg and heights rising to 5748 m, the convective contribution is fading and the disagreement is about gradient tightness. Prepare for a reefed 20 kt NE crossing rather than the drifting scenario.", "Thracian Sea (open water)|||2026-10-05": "The direction split is 69 degrees (ECMWF ESE 11 kt, GFS NE 23 kt) but the gusts match almost exactly at 28 and 30 kt. With CAPE at 50 J/kg and a ridge at 5783 m, those matching gusts must come from the pressure gradient, which supports the stronger NE solution. Expect a gusty open-water day near 30 kt and hold off on committing to a downwind or upwind route.", "Thracian Sea (open water)|||2026-10-06": "ECMWF gives 13 kt ESE gusting 36 kt, GFS 22 kt NE gusting 29 kt, so both a 9 kt mean split and 69 degrees of direction spread. CAPE of 30 J/kg under a 5807 m ridge with t500 -10.5 C gives no convective basis for a 36 kt gust on 13 kt of mean wind, so the GFS steady NE is the better planning assumption. Budget for 22 kt NE with gusts close to 30 kt across the open Thracian Sea.", "Dardaneles (E of Lemnos open water)|||2026-10-04": "Direction is effectively agreed (NE, 2 degrees apart) so the only question is strength: ECMWF 10 kt gusting 18 kt versus GFS 23 kt gusting 32 kt, a 13-15 kt spread. With CAPE down to 250 J/kg and the ridge building to 5748 m, this is a gradient disagreement, not a squall disagreement. On the approach east of Lemnos plan for 23 kt NE and 32 kt gusts, with the light case as the bonus.", "Dardaneles (E of Lemnos open water)|||2026-10-05": "This is the biggest directional disagreement in the table at 116 degrees: ECMWF 12 kt SSE, GFS 26 kt NE, yet both gust 28-32 kt. With CAPE at only 50 J/kg beneath a 5783 m ridge, a strong sustained NE outflow fits the stable pattern far better than a light SSE breeze with 28 kt gusts. A 116 degree flip is the difference between a beat and a run on this leg, so keep departure timing and routing flexible and be ready for 30 kt gusts.", "Dardaneles (E of Lemnos open water)|||2026-10-06": "Gusts agree within 2 kt (31 and 33 kt) while the means differ by 13 kt and the directions by 89 degrees (ECMWF 13 kt SE, GFS 27 kt NE). With CAPE at 30 J/kg and t500 only -10.5 C under a 5807 m ridge, gusts above 30 kt have to be gradient-driven, which argues strongly for the 27 kt NE solution. Treat this as near-gale NE conditions in the open water east of Lemnos and plan sail area accordingly.", "Agios Efstratios (S of Lemnos open water)|||2026-10-04": "Direction is agreed at NE within 3 degrees, but the gust spread of 17 kt is the largest in the table: ECMWF 7 kt gusting 16 kt against GFS 22 kt gusting 33 kt. CAPE of 250 J/kg and t500 -14.9 C allow some shower-enhanced gusts but the bulk of the difference is gradient strength. Because the outcome ranges from a pleasant NE sail to 33 kt gusts in open water south of Lemnos, rig conservatively.", "Agios Efstratios (S of Lemnos open water)|||2026-10-05": "The direction spread is 119 degrees (ECMWF 9 kt SSE, GFS 26 kt NE) while the gusts differ by only 2 kt at 30 and 32 kt. Under a 5783 m ridge with CAPE at 50 J/kg, 30 kt gusts cannot be shower-driven, so the sustained 26 kt NE scenario is the more physically consistent one. Assume a strong NE day with 30 kt gusts and treat the SSE option as unlikely when planning shelter.", "Agios Efstratios (S of Lemnos open water)|||2026-10-06": "The two models give identical 31 kt gusts but split 9 kt SSE against 26 kt NE, a 107 degree direction difference. With CAPE at 30 J/kg and a strong ridge overhead (z500 5807 m, t500 -10.5 C), an agreed 31 kt gust points to a real gradient wind, which undermines ECMWF's 9 kt mean. Plan for 26 kt NE gusting 31 kt in the open water south of Lemnos.", "Mount Athos (N approach)|||2026-10-04": "These are the lightest winds in the table but they still disagree meaningfully: ECMWF 5 kt E gusting 17 kt, GFS 12 kt NE gusting 26 kt, 47 degrees apart. With CAPE at 250 J/kg and t500 -14.9 C there is still enough instability for isolated shower gusts toward the GFS values even in a light mean flow. On the north approach the 47 degree split decides whether you are in the lee or exposed, so keep the approach decision late and be ready for gusts into the mid-20s.", "Mount Athos (N approach)|||2026-10-05": "Direction is broadly agreed (NE versus ENE, 17 degrees) and the means split 9 kt against 18 kt, but here ECMWF is the gustier model at 32 kt against GFS's 26 kt. With CAPE down to 50 J/kg under a 5783 m ridge, those gusts are not convective, so treat the 32 kt figure as a local acceleration risk on the approach rather than a shower squall. Expect around 18 kt of NE-ENE breeze and be prepared for gusts to 30 kt.", "Thracian Sea (open water)|||2026-10-03 ": ""}, "dirPerModel": {"Keramoti / Thassos (E of Thassos open water)": [null, null, null, "ESE / NE", null, null, null], "Samothrace (S of Samothrace open water)": [null, null, "SE / NE", "ESE / NE", null, null, null], "West from Lemnos (open water)": [null, null, null, null, null, null, null], "Thracian Sea (open water)": [null, null, "ESE / NE", "ESE / NE", null, null, null], "Dardaneles (E of Lemnos open water)": [null, null, "SSE / NE", "SE / NE", null, null, null], "Agios Efstratios (S of Lemnos open water)": [null, null, "SSE / NE", "SSE / NE", null, null, null], "Mount Athos (N approach)": [null, "E / NE", null, null, null, null, null]}}, "wave": {"available": false, "label": "Wave height (Hs)", "unit": "m", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "period": {"available": false, "label": "Wave period", "unit": "s", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "wave_dir": {"available": false, "label": "Wave direction", "unit": "", "opensNote": "Marine model doesn't reach these trip dates yet -- rerun closer to the trip"}, "poseidon_wind": {"available": false, "label": "Wind (mean)", "unit": "kt", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_wind_max": {"available": false, "label": "Wind (max)", "unit": "kt", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_rain": {"available": false, "label": "Rain", "unit": "mm", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_temp_lo": {"available": false, "label": "Temp (low)", "unit": "°C", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_temp_hi": {"available": false, "label": "Temp (high)", "unit": "°C", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_wave": {"available": false, "label": "Wave height", "unit": "m", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_wind_dir": {"available": false, "label": "Wind direction", "unit": "", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}, "poseidon_wave_dir": {"available": false, "label": "Wave direction", "unit": "", "opensNote": "HCMR Poseidon (unofficial) — horizon is ~5-6 days; rerun closer to the trip"}}, "sailingSummary": "Skipper, the week splits cleanly into two halves. From Saturday 3 October through Tuesday 6 October you are in a northeasterly regime — NE to ENE at every spot, veering into an ENE/ESE and even SSE component at the southern and eastern sites on the 5th and 6th — that builds steadily rather than blowing through in one hit. Daily means climb from roughly 9-14kt on the 3rd to 15-20kt by the 6th, with daily maxima of 22-23kt at the exposed offshore spots. The 500hPa picture explains it: geopotential height rises from 5734m on the 3rd to 5807m on the 6th with 500hPa temperature warming from -15.3°C to -10.5°C, so a weak trough is filling and ridging in behind, with only 14-17kt of NW steering flow aloft. That is a slow-moving, low-amplitude pattern — which is exactly why the models fight over the surface detail. From the 7th onward we only have EC46 ensemble mean, showing 2.5-8.4kt ENE/NE everywhere; treat that as \"regime relaxing, probably\", not as a promise of a flat calm.\n\nCalmest by a wide margin is the Mount Athos north approach: 5.5kt mean, 9.2kt max and only 17.1kt peak gust on the 3rd, then 2.5-2.7kt in the EC46 tail — motoring water. Keramoti/Thassos on the 3rd (8.8kt mean, 13.0 max) and West from Lemnos on the 3rd (9.5/13.1) are the other easy starts. The roughest patch is the eastern approaches on the 5th-6th: Dardanelles 19.9kt mean, 22.9 max, 33.0 gust on the 6th, and Samothrace 19.3/23.2/33.0 the same day. Watch the gust ratios rather than the means — Keramoti on the 6th shows 36.7kt gust against a 22.0kt wind_max (ratio 1.67), West from Lemnos 34.4 against 19.5 (1.77), Thracian Sea 35.8 against 23.1, and Mount Athos 31.7 against 15.2 (over 2.0). Those are squall signatures, not steady breeze. No wave data came through from the marine model this run, so assume wind-sea only: 20kt of NE over the Thracian Sea fetch will build a short, steep 1.5-2m chop by the 6th.\n\nRain is the headline change. The 3rd and 4th are essentially dry (0.0-0.3mm), then the 5th and 6th deliver 30.6 and 30.3mm at Keramoti, 31.0mm at the Dardanelles on the 6th, 29.2mm at Athos, and 15-21mm elsewhere. Temperatures barely move — lows 17.6-20.8°C, highs 20.1-22.8°C — so this is wet, not cold. On convection: CAPE is modest and falling (450 J/kg on the 3rd, 250 on the 4th, 50-30 on the 5th-6th), so deep thunderstorms are unlikely, but SST-minus-T850 is above the 13°C Mediterranean threshold every day and climbs hard — 13.2, 14.4, 17.2, 17.4°C against a 21.4°C sea. That combination of cold air over warm water with low CAPE means low-topped squall lines and a genuine, if localised, waterspout risk on the 5th and 6th, consistent with those inflated gust ratios. Model disagreement is severe: every flagged day is essentially ECMWF versus GFS, and the gaps are enormous — West from Lemnos on the 5th, ECMWF 6.3kt against GFS 24.4kt; Agios Efstratios on the 5th, 8.9 against 26.1; Dardanelles on the 6th, 13.2 against 26.5. The posted means of 15-20kt are therefore an average of two incompatible solutions, not a likely outcome. Plan for the GFS number and be pleasantly surprised.\n\nAgainst the previous run of 21 September, the regime direction holds (NE/ENE throughout, then and now) but the timing and the wetness have shifted materially. The old EC46 had winds peaking on the 3rd (Dardanelles 18.3kt, Agios Efstratios 16.7kt, Samothrace 15.3kt) and easing all week, with rain of only 0.2-1.5mm per day. This run reverses that: the 3rd is now lighter than advertised (Dardanelles 14.1kt versus 18.3) while the 5th-6th are windier, and rain jumps from under 1mm to 30mm. Direction has also shifted from a clean 32-50° NE to a mixed ESE/SSE-versus-NE signal on the 5th-6th, hinting at a disturbance passing south or west rather than a pure Etesian. Athos is up too, from 3-4kt to 5.5-13.6kt on the 3rd-5th.\n\nPractically: sail hard on Saturday the 3rd and Sunday the 4th while it is dry and manageable, and put the long exposed legs — the Dardanelles approach and the run east of Lemnos — into that window. Get west and into shelter before Monday. Reef before dark on the 4th; from the 5th expect 20kt-plus with 33kt squalls and heavy rain, so the lee of Thassos or south Samothrace is the place to sit out the 5th-6th. Keep the Athos north approach for the 3rd or for the quiet EC46 tail after the 7th, and carry fuel — it may be near-windless. Radar watch and hatches shut on the 5th-6th given the waterspout indicators, and re-check the forecast daily: with an 18kt model spread, only the short range is worth trusting.", "pageTitle": "North Aegean Forecast", "eyebrow": "North Aegean · sailing forecast 3-9 Oct", "heading": "Thassos · Samothrace · Lemnos · Athos", "labels": {"Keramoti / Thassos (E of Thassos open water)": {"short": "Thassos", "shortMobile": "Tha"}, "Samothrace (S of Samothrace open water)": {"short": "Samothrace", "shortMobile": "Sam"}, "West from Lemnos (open water)": {"short": "Lemnos", "shortMobile": "Lem"}, "Thracian Sea (open water)": {"short": "Thracian Sea", "shortMobile": "Thr"}, "Dardaneles (E of Lemnos open water)": {"short": "Dardaneles", "shortMobile": "Dar"}, "Agios Efstratios (S of Lemnos open water)": {"short": "Ag. Efstratios", "shortMobile": "Efs"}, "Mount Athos (N approach)": {"short": "Mount Athos", "shortMobile": "Ath"}}, "mediumModelsLabel": "ECMWF IFS / NOAA GFS / DWD ICON", "spreadWindKt": 6, "spreadDirDeg": 45, "dirFlagMinWindKt": 5, "charts": [], "convection": {"2026-10-09": {"cape": null, "t850": null, "sst": 21.4, "sstCarriedForward": true, "delta": null}, "2026-10-08": {"cape": null, "t850": null, "sst": 21.4, "sstCarriedForward": true, "delta": null}, "2026-10-03": {"cape": 450, "t850": 8.2, "sst": 21.4, "sstCarriedForward": true, "delta": 13.2}, "2026-10-07": {"cape": null, "t850": null, "sst": 21.4, "sstCarriedForward": true, "delta": null}, "2026-10-06": {"cape": 30, "t850": 4.0, "sst": 21.4, "sstCarriedForward": true, "delta": 17.4}, "2026-10-04": {"cape": 250, "t850": 7.0, "sst": 21.4, "sstCarriedForward": true, "delta": 14.4}, "2026-10-05": {"cape": 50, "t850": 4.2, "sst": 21.4, "sstCarriedForward": true, "delta": 17.2}}, "officialSources": [{"label": "HNMS (EMY) maritime forecast", "url": "https://www.emy.gr/emy/en/maritime/maritime_fore"}, {"label": "EMY weather warnings", "url": "https://www.emy.gr/emy/en/maritime/meteoalarm"}, {"label": "meteo.gr Aegean", "url": "https://www.meteo.gr/cf-international.cfm?city_id=32"}, {"label": "Navtex 518 kHz — Iraklion (J) / Athens (H)"}, {"label": "VHF Ch 16 → Ch 25/26 (Greek coastguard weather)"}], "spotCoords": {"Keramoti / Thassos (E of Thassos open water)": [40.7, 24.91], "Samothrace (S of Samothrace open water)": [40.21, 25.37], "West from Lemnos (open water)": [40.12, 24.71], "Thracian Sea (open water)": [40.45, 25.1], "Dardaneles (E of Lemnos open water)": [39.83, 25.69], "Agios Efstratios (S of Lemnos open water)": [39.68, 25.06], "Mount Athos (N approach)": [40.55, 24.182]}, "timezone": "Europe/Athens"}
 </script>
 
 <!-- Null until fetch_coastline.py has been run for this area's spots --
@@ -462,7 +530,7 @@
   const MONTHS_FULL = ["January","February","March","April","May","June","July",
                         "August","September","October","November","December"];
   const PARAM_ORDER = [
-    "wind_mean", "wind_dir", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period",
+    "wind_mean", "wind_dir", "wind_max", "gust", "rain", "temp_lo", "temp_hi", "wave", "wave_dir", "period",
     // Tier 5, independent/additive -- absent from DATA.params entirely (not
     // even as a pending placeholder) when area.json's poseidon_enabled is
     // false, so these five keys are simply skipped below in that case.
@@ -584,10 +652,25 @@
     document.querySelector(".sw").textContent = `${DATA.spreadWindKt}kt`;
     document.querySelector(".sd").textContent = `${DATA.spreadDirDeg}°`;
     document.querySelector(".dw").textContent = `${DATA.dirFlagMinWindKt}kt`;
-    // "poseidon_wind" (or any tier-5 key) only exists in DATA.params when
-    // area.json's poseidon_enabled is true -- hide the paragraph describing
-    // a Greece-specific tier entirely for an area that could never have it.
     document.getElementById("poseidon-footer").hidden = !DATA.params.poseidon_wind;
+    // Official sources from area.json -- rendered dynamically so the template
+    // stays area-agnostic.
+    const sources = DATA.officialSources || [];
+    if (sources.length) {
+      const list = document.getElementById("official-sources-list");
+      sources.forEach((s, i) => {
+        if (i) { const sep = document.createTextNode(" · "); list.appendChild(sep); }
+        if (s.url) {
+          const a = document.createElement("a");
+          a.href = s.url; a.target = "_blank"; a.rel = "noopener";
+          a.textContent = s.label;
+          list.appendChild(a);
+        } else {
+          list.appendChild(document.createTextNode(s.label));
+        }
+      });
+      document.getElementById("official-sources-bar").hidden = false;
+    }
   }
 
   function buildSummary() {
@@ -596,7 +679,7 @@
 
     const label = document.createElement("p");
     label.className = "summary-label";
-    label.textContent = "Sailing summary · AI-generated, read the numbers above too";
+    label.textContent = "AI sailing summary · interpretation only — verify with official forecasts before departing";
     card.appendChild(label);
     // Multiple paragraphs requested from the model -- render each on its
     // own <p> instead of one dense block.
@@ -691,7 +774,8 @@
 
     const badge = document.createElement("div");
     badge.className = "dp-badge";
-    badge.textContent = "⚠ Model disagreement: " + flag.join(" + ");
+    const flagLabels = {"wind": "wind speed", "dir": "direction"};
+    badge.textContent = "⚠ Model disagreement: " + flag.map(f => flagLabels[f] || f).join(" + ");
     popup.appendChild(badge);
 
     if (perModel) {
@@ -798,6 +882,12 @@
           td.style.fontWeight = "600";
           td.style.cursor = "pointer";
           td.addEventListener("click", () => showDisagreementPopup(param, p, i, date));
+        }
+        // Steep sea warning (steepness Hs/1.56T² > 0.04)
+        if (param.shortPeriodWarn && param.shortPeriodWarn[p] && param.shortPeriodWarn[p][i]) {
+          td.title = "Steep sea (Hs/1.56T² > 0.04) — uncomfortable regardless of height alone";
+          td.style.background = "rgba(230,126,34,0.12)";
+          td.style.fontWeight = "600";
         }
         tr.appendChild(td);
       });
@@ -1100,9 +1190,11 @@
         const td = document.createElement("td");
         const flag = param.flags && param.flags[p] && param.flags[p][i];
         const dirPM = param.dirPerModel && param.dirPerModel[p] && param.dirPerModel[p][i];
+        const cellVal = param.series[p][i];
         // On a direction-flagged day show per-model directions instead of the
-        // circular mean, which would misrepresent models pointing opposite ways.
-        td.textContent = (flag && flag.includes("dir") && dirPM) ? dirPM : (param.series[p][i] || "–");
+        // circular mean. If the mean was undefined (VAR), show that as-is.
+        td.textContent = (flag && flag.includes("dir") && dirPM && cellVal !== "VAR")
+          ? dirPM : (cellVal || "–");
         if (flag && flag.includes("dir")) {
           const warn = document.createElement("span");
           warn.textContent = " ⚠";
@@ -1169,6 +1261,353 @@
     text.textContent = param.opensNote;
     body.appendChild(text);
     card.appendChild(body);
+    return card;
+  }
+
+  // ─── Passage planner ───────────────────────────────────────────────────────
+
+  function haversineNm(lat1, lon1, lat2, lon2) {
+    const R = 3440.065;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function rhumbBearing(lat1, lon1, lat2, lon2) {
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const dPhi = Math.log(Math.tan((lat2*Math.PI/180)/2 + Math.PI/4) /
+                          Math.tan((lat1*Math.PI/180)/2 + Math.PI/4));
+    const q = Math.abs(dPhi) > 1e-10 ? dLon/dPhi : Math.cos(lat1*Math.PI/180);
+    return (Math.atan2(dLon, dPhi) * 180/Math.PI + 360) % 360;
+  }
+
+  function interpolatePt(lat1, lon1, lat2, lon2, frac) {
+    return [lat1 + (lat2-lat1)*frac, lon1 + (lon2-lon1)*frac];
+  }
+
+  function windAngleDeg(windFrom, heading) {
+    const diff = ((windFrom - heading) + 360) % 360;
+    return Math.round(Math.min(diff, 360-diff));
+  }
+
+  function windSide(windFrom, heading) {
+    return ((windFrom - heading + 360) % 360) < 180 ? "P" : "S";
+  }
+
+  function pointOfSail(angle) {
+    if (angle < 40)  return { label: "Close-hauled", cls: "leg-sail-beat" };
+    if (angle < 70)  return { label: "Close reach",  cls: "leg-sail-beat" };
+    if (angle < 110) return { label: "Beam reach",   cls: "leg-sail-reach" };
+    if (angle < 150) return { label: "Broad reach",  cls: "leg-sail-reach" };
+    return               { label: "Run",             cls: "leg-sail-run" };
+  }
+
+  function rowClass(speed) {
+    if (speed >= 25) return "leg-bad";
+    if (speed >= 18) return "leg-warn";
+    return "";
+  }
+
+  async function fetchLegWind(waypoints, timezone) {
+    const lats = waypoints.map(w => w[0].toFixed(4)).join(",");
+    const lons = waypoints.map(w => w[1].toFixed(4)).join(",");
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", lats);
+    url.searchParams.set("longitude", lons);
+    url.searchParams.set("hourly", "windspeed_10m,winddirection_10m,windgusts_10m");
+    url.searchParams.set("models", "gfs_seamless");
+    url.searchParams.set("wind_speed_unit", "kn");
+    url.searchParams.set("forecast_days", "16");
+    url.searchParams.set("timezone", timezone);
+    url.searchParams.set("cell_selection", "sea");
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Open-Meteo ${r.status}`);
+    const d = await r.json();
+    // Normalise: single location returns object, multi returns array
+    return Array.isArray(d) ? d : [d];
+  }
+
+  function buildLegCard() {
+    const places = DATA.places;
+    const labels = DATA.labels;
+    const spotCoords = {}; // populated below from DATA -- need coords
+    // Coords are embedded via a helper; we borrow from the map's spot list
+    // which JS already has. We'll re-fetch from Open-Meteo using spot names.
+    // Coord lookup: stored in DATA.spotCoords (added to payload).
+    const coords = DATA.spotCoords || {};
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const h2 = document.createElement("h2");
+    h2.className = "card-title";
+    h2.textContent = "Passage planner";
+    titleWrap.appendChild(h2);
+    const sub = document.createElement("div");
+    sub.className = "card-unit";
+    sub.textContent = "GFS hourly · fetched live";
+    titleWrap.appendChild(sub);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    // Controls
+    const ctrl = document.createElement("div");
+    ctrl.className = "leg-controls";
+
+    function makeSelect(labelText, id, opts) {
+      const lbl = document.createElement("label");
+      lbl.setAttribute("for", id);
+      lbl.textContent = labelText;
+      const sel = document.createElement("select");
+      sel.id = id;
+      opts.forEach(([val, text]) => {
+        const o = document.createElement("option"); o.value = val; o.textContent = text; sel.appendChild(o);
+      });
+      lbl.appendChild(sel);
+      ctrl.appendChild(lbl);
+      return sel;
+    }
+
+    function makeInput(labelText, id, type, val, min, max, step) {
+      const lbl = document.createElement("label");
+      lbl.setAttribute("for", id);
+      lbl.textContent = labelText;
+      const inp = document.createElement("input");
+      inp.type = type; inp.id = id; inp.value = val;
+      if (min !== undefined) inp.min = min;
+      if (max !== undefined) inp.max = max;
+      if (step !== undefined) inp.step = step;
+      inp.style.width = "72px";
+      lbl.appendChild(inp);
+      ctrl.appendChild(lbl);
+      return inp;
+    }
+
+    const spotOpts = places.map(p => [p, labels[p]?.short || p]);
+    const fromSel = makeSelect("From", "leg-from", spotOpts);
+    const toSel   = makeSelect("To",   "leg-to",   spotOpts);
+    if (places.length > 1) toSel.value = places[1];
+
+    const dateOpts = DATA.dates.map((d, i) => [d, dateLabel(d, i===0) + (i===0?"":" "+d.slice(5,7)+"/"+d.slice(8))]);
+    const dateSel  = makeSelect("Date", "leg-date", dateOpts);
+
+    const hourInp  = makeInput("Depart (UTC+3)", "leg-hour", "number", 8, 0, 23, 1);
+    const speedInp = makeInput("Speed (kt)", "leg-speed", "number", 5, 1, 20, 0.5);
+
+    const btn = document.createElement("button");
+    btn.className = "leg-plan-btn";
+    btn.textContent = "Plan passage";
+    ctrl.appendChild(btn);
+    card.appendChild(ctrl);
+
+    // Results area
+    const results = document.createElement("div");
+    card.appendChild(results);
+
+    btn.addEventListener("click", async () => {
+      const fromSpot = fromSel.value;
+      const toSpot   = toSel.value;
+      if (fromSpot === toSpot) { results.innerHTML = '<p class="leg-error">Select two different spots.</p>'; return; }
+      const c1 = coords[fromSpot], c2 = coords[toSpot];
+      if (!c1 || !c2) { results.innerHTML = '<p class="leg-error">Coordinates unavailable.</p>'; return; }
+
+      btn.disabled = true;
+      btn.textContent = "Fetching…";
+      results.innerHTML = "";
+
+      try {
+        const [lat1, lon1] = c1, [lat2, lon2] = c2;
+        const distNm  = haversineNm(lat1, lon1, lat2, lon2);
+        const bearing = rhumbBearing(lat1, lon1, lat2, lon2);
+        const speed   = parseFloat(speedInp.value) || 5;
+        const etaH    = distNm / speed;
+        const depHour = parseInt(hourInp.value) || 8;
+        const depDate = dateSel.value;
+
+        // Waypoints: from + 5 intermediate + to
+        const N = 7;
+        const waypoints = Array.from({length: N}, (_, i) => interpolatePt(lat1, lon1, lat2, lon2, i/(N-1)));
+
+        const wpData = await fetchLegWind(waypoints, DATA.timezone || "Europe/Athens");
+
+        // Build per-hour table
+        const summaryDiv = document.createElement("div");
+        summaryDiv.className = "leg-summary";
+        summaryDiv.textContent =
+          `${labels[fromSpot]?.short || fromSpot} → ${labels[toSpot]?.short || toSpot} · ` +
+          `${Math.round(distNm)} nm · bearing ${Math.round(bearing)}° · ETA ~${etaH.toFixed(1)} h`;
+        results.appendChild(summaryDiv);
+
+        const scroll = document.createElement("div");
+        scroll.className = "table-scroll";
+        const tbl = document.createElement("table");
+        tbl.className = "leg-table";
+
+        const thead = document.createElement("thead");
+        const hr = document.createElement("tr");
+        ["Time", "Pos (nm)", "Wind (kt)", "Dir", "vs hdg", "Point of sail", "Gust (kt)"].forEach(h => {
+          const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+        });
+        thead.appendChild(hr); tbl.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        const totalHours = Math.ceil(etaH) + 1;
+
+        // Build time index for the departure date
+        const depDateStr = depDate + "T" + String(depHour).padStart(2,"0") + ":00";
+
+        for (let h = 0; h <= Math.ceil(etaH); h++) {
+          const distCovered = Math.min(speed * h, distNm);
+          const frac = distNm > 0 ? distCovered / distNm : 0;
+          const wpIdx = Math.round(frac * (N-1));
+          const hData = wpData[wpIdx]?.hourly;
+          if (!hData) continue;
+
+          // Find the right hour in the time series
+          const localH = (depHour + h) % 24;
+          const daysAhead = Math.floor((depHour + h) / 24);
+          const targetDate = new Date(depDate + "T00:00:00");
+          targetDate.setDate(targetDate.getDate() + daysAhead);
+          const targetStr = targetDate.toISOString().slice(0,10) + "T" + String(localH).padStart(2,"0") + ":00";
+
+          const tIdx = hData.time.indexOf(targetStr);
+          if (tIdx === -1) continue;
+
+          const wspd = hData.windspeed_10m[tIdx];
+          const wdir = hData.winddirection_10m[tIdx];
+          const gust = hData.windgusts_10m[tIdx];
+
+          const angle  = windAngleDeg(wdir, bearing);
+          const side   = windSide(wdir, bearing);
+          const pos    = pointOfSail(angle);
+          const timeStr = String(localH).padStart(2,"0") + ":00";
+          const distStr = Math.round(distCovered) + " nm";
+
+          const row = document.createElement("tr");
+          if (wspd !== null) row.className = rowClass(wspd);
+
+          const cells = [
+            {text: timeStr},
+            {text: distStr},
+            {text: wspd !== null ? Math.round(wspd) : "–", cls: "mono"},
+            {text: wdir !== null ? deg_to_compass_js(wdir) : "–"},
+            {text: angle + "° " + side, cls: "mono"},
+            {text: pos.label, cls: pos.cls},
+            {text: gust !== null ? Math.round(gust) : "–", cls: "mono"},
+          ];
+          cells.forEach(({text, cls}) => {
+            const td = document.createElement("td");
+            td.textContent = text;
+            if (cls) td.className = cls;
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        }
+        tbl.appendChild(tbody);
+        scroll.appendChild(tbl);
+        results.appendChild(scroll);
+
+        const note = document.createElement("p");
+        note.className = "leg-summary";
+        note.style.marginTop = "8px";
+        note.textContent = "Wind at each waypoint along the rhumb line · GFS hourly · Red >25 kt, amber 18–25 kt";
+        results.appendChild(note);
+
+      } catch (e) {
+        results.innerHTML = `<p class="leg-error">Fetch failed: ${e.message}</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Plan passage";
+      }
+    });
+
+    return card;
+  }
+
+  // Compass helper for client-side use (mirrors Python's deg_to_compass)
+  function deg_to_compass_js(d) {
+    if (d === null || d === undefined) return "–";
+    return ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(((d%360)+360)%360 / 22.5) % 16];
+  }
+
+  function buildConvectionCard() {
+    const conv = DATA.convection;
+    const dates = DATA.dates.filter(d => conv[d]);
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.className = "card-title";
+    title.textContent = "Convection / squall risk";
+    titleWrap.appendChild(title);
+    const unit = document.createElement("div");
+    unit.className = "card-unit";
+    unit.textContent = "GFS + Open-Meteo Marine · area centroid";
+    titleWrap.appendChild(unit);
+    head.appendChild(titleWrap);
+    card.appendChild(head);
+
+    const tbl = document.createElement("table");
+    tbl.className = "conv-table";
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    ["Date", "CAPE (J/kg)", "T850 (°C)", "SST (°C)", "SST−T850", ""].forEach(h => {
+      const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+    });
+    thead.appendChild(hr); tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    dates.forEach(d => {
+      const c = conv[d];
+      const row = document.createElement("tr");
+      const capeFlag = c.cape !== null && c.cape > 500;
+      const deltaFlag = c.delta !== null && c.delta > 13;
+      const flagEl = (label) => {
+        const s = document.createElement("span");
+        s.className = "conv-flag"; s.textContent = label; return s;
+      };
+
+      const sstStr = c.sst !== null ? String(c.sst) + (c.sstCarriedForward ? " †" : "") : "–";
+      const cells = [
+        dateLabel(d, d === DATA.dates[0]),
+        c.cape !== null ? String(c.cape) : "–",
+        c.t850 !== null ? String(c.t850) : "–",
+        sstStr,
+        c.delta !== null ? String(c.delta) : "–",
+      ];
+      cells.forEach((val, i) => {
+        const td = document.createElement("td"); td.textContent = val; row.appendChild(td);
+      });
+      const flagTd = document.createElement("td");
+      if (capeFlag) flagTd.appendChild(flagEl("CAPE"));
+      if (deltaFlag) flagTd.appendChild(flagEl("SST−T850"));
+      row.appendChild(flagTd);
+      tbody.appendChild(row);
+    });
+    tbl.appendChild(tbody);
+
+    const scroll = document.createElement("div");
+    scroll.className = "table-scroll";
+    scroll.appendChild(tbl);
+    card.appendChild(scroll);
+
+    const note = document.createElement("p");
+    note.className = "conv-note";
+    note.textContent = "CAPE > 500 J/kg = moderate convective potential (squalls, thunderstorms); " +
+      "GFS CAPE has low skill beyond ~5 days — treat it as a rough signal only inside that window. " +
+      "SST − T850 > 13 °C = cool air over warm sea, elevated waterspout and squall risk (standard Med indicator); " +
+      "uses daily-min T850 (coldest air = worst instability) and max CAPE across all spots. " +
+      "SST marked † is carried forward past the marine model horizon — SST changes slowly in autumn so this is reasonable.";
+    card.appendChild(note);
+
     return card;
   }
 
@@ -1305,6 +1744,13 @@
       cardsEl.appendChild(buildCard(key, param));
     }
   });
+
+  cardsEl.appendChild(buildLegCard());
+
+  // Convection card -- shown only when convection data exists
+  if (DATA.convection && Object.keys(DATA.convection).length) {
+    cardsEl.appendChild(buildConvectionCard());
+  }
 
   cardsEl.appendChild(buildChartsCard());
 
