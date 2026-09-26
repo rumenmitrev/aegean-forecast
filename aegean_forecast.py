@@ -557,7 +557,9 @@ def fetch(url, params, attempts=3):
     # without a retry one slow response blanks a whole spot for the run.
     for attempt in range(attempts):
         try:
-            r = requests.get(url, params=params, timeout=30)
+            # 60s: the 9-point x 3-model medium-range batch has timed out at
+            # 30s three times running (26 Sep CI run lost Keramoti entirely).
+            r = requests.get(url, params=params, timeout=60)
             if r.status_code < 500 or attempt == attempts - 1:
                 r.raise_for_status()
                 return r.json()
@@ -1422,11 +1424,22 @@ Respond ONLY with valid JSON mapping card key → summary string. Example:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in response.content if b.type == "text"), "")
-        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"{e} (stop_reason={response.stop_reason}, {len(raw)} chars)") from e
+        # Tolerant parse: the model has returned one object per card on
+        # separate lines, or prose around the JSON (runs of 24-26 Sep all
+        # failed a strict json.loads). Merge every JSON object in the text.
+        decoder, merged, pos = json.JSONDecoder(), {}, 0
+        while (start := raw.find("{", pos)) != -1:
+            try:
+                obj, pos = decoder.raw_decode(raw, start)
+            except json.JSONDecodeError:
+                pos = start + 1
+                continue
+            if isinstance(obj, dict):
+                merged.update({k: v for k, v in obj.items() if isinstance(v, str)})
+        if not merged:
+            raise ValueError(f"no JSON object in reply (stop_reason={response.stop_reason}, "
+                             f"{len(raw)} chars): {raw[:200]!r}")
+        return merged
     except Exception as e:
         print(f"Card summaries skipped: {e}", file=sys.stderr)
         return {}
@@ -2197,8 +2210,10 @@ def main():
         if missing:
             medium_label += f"; {' / '.join(missing)} not in range yet"
     if medium_records and ec46_records:
-        medium_dates = {r["date"] for r in medium_records}
-        ec46_fill = [r for r in ec46_records if r["date"] not in medium_dates]
+        # Keyed per spot AND date: a spot whose medium-range fetch failed
+        # outright still gets EC46 rather than a blank column.
+        medium_keys = {(r["spot"], r["date"]) for r in medium_records}
+        ec46_fill = [r for r in ec46_records if (r["spot"], r["date"]) not in medium_keys]
         wind_records = medium_records + ec46_fill
         wind_source_label = f"Medium-range consensus ({medium_label}); EC46 where medium-range hasn't reached"
     elif medium_records:
