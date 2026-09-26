@@ -552,10 +552,19 @@ def trip_dates(times):
 
 # ----------------------------------------------------------------- network --
 
-def fetch(url, params):
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def fetch(url, params, attempts=3):
+    # Open-Meteo occasionally times out or 5xxs on the batched kernel calls;
+    # without a retry one slow response blanks a whole spot for the run.
+    for attempt in range(attempts):
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            if r.status_code < 500 or attempt == attempts - 1:
+                r.raise_for_status()
+                return r.json()
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(5 * (attempt + 1))
 
 
 def ec46(lat, lon):
@@ -749,26 +758,69 @@ def fetch_convection(dates):
     return out
 
 
-def sea_state(lat, lon):
+def sea_state(lat, lon, model=None):
     """One HTTP call for all 9 points of the 3x3 kernel around (lat, lon) --
     same batching as medium_range(). Marine has no per-model consensus step
-    (single model, "best_match"), so the kernel here is the only combining
-    -- see extract_sea_state_records()."""
+    (single model, "best_match" unless `model` names one), so the kernel
+    here is the only combining -- see extract_sea_state_records()."""
     points = kernel_points(lat, lon)
-    return fetch("https://marine-api.open-meteo.com/v1/marine", {
+    params = {
         "latitude": ",".join(str(p[0]) for p in points),
         "longitude": ",".join(str(p[1]) for p in points),
         "daily": SEA_DAILY,
         "forecast_days": MEDIUM_RANGE_DAYS,
         "timezone": TRIP_TZ.key,
         "cell_selection": CELL_SELECTION,
-    })
+    }
+    if model:
+        params["models"] = model
+    return fetch("https://marine-api.open-meteo.com/v1/marine", params)
 
 
-def opencharts_product(product, valid_time=None, projection=CHART_PROJECTION):
+# best_match resolves to Meteo-France MFWAM in the Aegean, which stops ~9-10
+# days out; ECMWF WAM runs the full 15 days. Trip dates best_match leaves
+# blank are filled from it, tagged by `source` so the dashboard marks them.
+SEA_FILL_MODEL = "ecmwf_wam025"
+SEA_FILL_LABEL = "ECMWF WAM"
+
+# Record `source` values that are a fill-in behind the card's main source --
+# marked per cell on the dashboard (cellNotes) with this tooltip text.
+FILL_NOTES = {
+    "ec46": "EC46 ensemble-mean fill-in (medium-range models don't reach this date yet) -- smoothed regime tendency",
+    SEA_FILL_MODEL: f"{SEA_FILL_LABEL} fill-in (Open-Meteo's default wave model doesn't reach this date yet)",
+}
+
+
+def cell_notes(records, dates):
+    """{spot: [note-or-None per date]} for fill-in cells, or None if none."""
+    notes = {}
+    for spot in SPOTS:
+        row = []
+        for d in dates:
+            match = next((r for r in records if r["spot"] == spot and r["date"] == d), None)
+            row.append(FILL_NOTES.get(match.get("source")) if match else None)
+        notes[spot] = row
+    return notes if any(n for row in notes.values() for n in row) else None
+
+
+def fill_sea_state_gaps(name, lat, lon, records):
+    """Fill this spot's all-None trip dates from SEA_FILL_MODEL, in place."""
+    gaps = [r for r in records if r["wave"] is None]
+    if not gaps:
+        return
+    fill = {r["date"]: r for r in extract_sea_state_records(name, sea_state(lat, lon, SEA_FILL_MODEL))}
+    for r in gaps:
+        f = fill.get(r["date"])
+        if f and f["wave"] is not None:
+            r.update(wave=f["wave"], period=f["period"], dir=f["dir"], source=SEA_FILL_MODEL)
+
+
+def opencharts_product(product, valid_time=None, projection=CHART_PROJECTION, base_time=None):
     params = {"projection": projection}
     if valid_time:
         params["valid_time"] = valid_time
+    if base_time:
+        params["base_time"] = base_time
     url = f"https://charts.ecmwf.int/opencharts-api/v1/products/{product}/"
     for attempt in range(4):
         r = requests.get(url, params=params, timeout=30)
@@ -793,23 +845,61 @@ def chart_link(data):
     return (link, desc) if link and desc else None
 
 
-def chart_for_date(date, product=None):
-    """(image_url, description) for the ECMWF synoptic chart valid on `date`,
-    or (None, reason) once `date` is beyond the current forecast horizon."""
-    if product is None:
-        product = CHART_PRODUCT
-    data = opencharts_product(product, f"{date.isoformat()}T00:00:00Z")
+_OPENCHARTS_TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
+_long_base_time_cache = {}
+
+
+def long_range_base_time(product):
+    """Newest 00Z/12Z base time for `product`, or None. With no base_time,
+    opencharts serves the newest run -- which is a 06Z/18Z run for half the
+    day, and those only reach +144h vs +240h for 00Z/12Z. Asking for an
+    impossible base_time makes the error body list the real ones."""
+    if product not in _long_base_time_cache:
+        data = opencharts_product(product, base_time="1900-01-01T00:00:00Z")
+        times = re.findall(_OPENCHARTS_TS, str(data.get("error", "")))
+        long_runs = sorted(t for t in times if t[11:13] in ("00", "12"))
+        _long_base_time_cache[product] = long_runs[-1] if long_runs else None
+    return _long_base_time_cache[product]
+
+
+# product -> last valid time the newest (no base_time) run reaches, learned
+# from the first failed lookup's error body; later dates past it skip
+# straight to the 00Z/12Z run instead of spending a request (ECMWF 429s).
+_latest_run_reach = {}
+
+
+def _chart_from_base(date, product, base_time):
+    data = opencharts_product(product, f"{date.isoformat()}T00:00:00Z", base_time=base_time)
     result = chart_link(data) if "error" not in data else None
     if result:
         return result
 
     # Exact midnight step may be missing; retry with the latest step ECMWF
     # actually published for this calendar date (still lists later dates too).
-    timestamps = re.findall(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", str(data.get("error", "")))
+    timestamps = re.findall(_OPENCHARTS_TS, str(data.get("error", "")))
+    if base_time is None and timestamps:
+        _latest_run_reach[product] = max(timestamps)
     same_day = [t for t in timestamps if t.startswith(date.isoformat())]
     if same_day:
-        data = opencharts_product(product, same_day[-1])
-        result = chart_link(data) if "error" not in data else None
+        data = opencharts_product(product, same_day[-1], base_time=base_time)
+        return chart_link(data) if "error" not in data else None
+    return None
+
+
+def chart_for_date(date, product=None):
+    """(image_url, description) for the ECMWF synoptic chart valid on `date`,
+    or (None, reason) once `date` is beyond the current forecast horizon.
+    Tries the newest run first, then the newest 00Z/12Z run (longer reach)."""
+    if product is None:
+        product = CHART_PRODUCT
+    reach = _latest_run_reach.get(product)
+    if reach is None or date.isoformat() <= reach[:10]:
+        result = _chart_from_base(date, product, None)
+        if result:
+            return result
+    base_time = long_range_base_time(product)
+    if base_time:
+        result = _chart_from_base(date, product, base_time)
         if result:
             return result
     return None, "beyond current forecast horizon"
@@ -893,6 +983,7 @@ def extract_medium_records(name, cells):
         speeds = [v["wind_mean"] for v in per_model.values() if v["wind_mean"] is not None]
         dirs = [v["dir"] for v in per_model.values() if v["dir"] is not None]
         gusts = [v["gust"] for v in per_model.values() if v["gust"] is not None]
+        maxes = [v["wind_max"] for v in per_model.values() if v["wind_max"] is not None]
 
         flags = []
         if len(speeds) >= 2 and (max(speeds) - min(speeds)) > SPREAD_WIND_KT:
@@ -929,6 +1020,10 @@ def extract_medium_records(name, cells):
             # min-max across models -- shown instead of the bare mean when the
             # "wind" flag fires, since e.g. mean(6, 20) = 13 misrepresents both.
             "wind_span": (min(speeds), max(speeds)) if speeds else None,
+            # Same span for the daily max wind, so the Wind (max) card can
+            # show it on wind-flagged days instead of a mean that sits below
+            # the windier model's *mean* (e.g. max 14 vs mean span 6-18).
+            "wind_max_span": (min(maxes), max(maxes)) if len(maxes) >= 2 else None,
             "gust_span": (min(gusts), max(gusts)) if len(gusts) >= 2 else None,
             "dir_spread": round(max_dir_diff) if max_dir_diff is not None else None,
             # Drop models where every field is None (beyond their forecast horizon).
@@ -953,7 +1048,7 @@ def extract_sea_state_records(name, cells):
             return [c["daily"].get(key, [None] * len(ref_time))[_i] for c in _cells]
         waves = [v for v in series("wave_height_max") if v is not None]
         out.append({
-            "spot": name, "date": day,
+            "spot": name, "date": day, "source": "best_match",
             "wave": max(waves) if waves else None,
             "period": mean(series("wave_period_max")),
             "dir": circular_mean_deg(series("wave_direction_dominant")),
@@ -987,7 +1082,7 @@ def medium_run_rows(records, run_date):
 
 def sea_state_run_rows(records, run_date):
     return [{
-        "run_date": run_date, "tier": "sea", "model": "openmeteo_marine_best_match",
+        "run_date": run_date, "tier": "sea", "model": f"openmeteo_marine_{r.get('source', 'best_match')}",
         "spot": r["spot"], "date": r["date"],
         "wave": r["wave"], "period": r["period"], "wave_dir": r["dir"],
     } for r in records]
@@ -1062,8 +1157,9 @@ def print_sea_state_day_tables(records):
         print(f"\n=== {date} ===")
         print(header)
         for r in rows:
+            fill_mark = "  *" if r.get("source") == SEA_FILL_MODEL else ""
             print(f"{r['spot']:<{PLACE_WIDTH}}{fmt_num(r['wave'], 8, 1)}{fmt_num(r['period'], 10, 1)}  "
-                  f"{deg_to_compass(r['dir'])}")
+                  f"{deg_to_compass(r['dir'])}{fill_mark}")
         print(f"{'RANGE':<{PLACE_WIDTH}}{col_range(rows, 'wave', 1):>8}{col_range(rows, 'period', 1):>10}")
         wave_extremes = named_extremes(rows, "wave")
         if wave_extremes:
@@ -1139,7 +1235,7 @@ def build_param_block(records, dates, field, label, unit, decimals, source_label
     return {
         "available": True, "label": label, "unit": unit, "decimals": decimals,
         "series": series, "tripExtremes": trip_extremes, "placeRange": place_range,
-        "sourceLabel": source_label,
+        "sourceLabel": source_label, "cellNotes": cell_notes(records, dates),
     }
 
 
@@ -1171,6 +1267,7 @@ def build_direction_block(records, dates, field, label, source_label, no_data_no
     return {
         "available": True, "type": "direction", "label": label, "unit": "",
         "series": series, "predominant": predominant, "sourceLabel": source_label,
+        "cellNotes": cell_notes(records, dates),
     }
 
 
@@ -1211,10 +1308,11 @@ def summary_data_table(wind_records, sea_records, upper=None, convection=None):
 
     if sea_records:
         lines.append("")
-        lines.append("place,date,wave_height_m,wave_period_s,wave_dir")
+        lines.append("place,date,source,wave_height_m,wave_period_s,wave_dir")
         for r in sea_records:
             wave_dir_str = deg_to_compass(r["dir"]) if r.get("dir") is not None else "-"
-            lines.append(f"{r['spot']},{r['date']},{r.get('wave')},{r.get('period')},{wave_dir_str}")
+            lines.append(f"{r['spot']},{r['date']},{r.get('source', 'best_match')},{r.get('wave')},"
+                         f"{r.get('period')},{wave_dir_str}")
 
     if upper:
         lines.append("")
@@ -1259,7 +1357,10 @@ def build_methodology_text(wind_source_label, sea_records, upper, convection):
     if sea_records:
         text += (" Wave height is significant wave height (Hs, average of top 1/3 of waves); "
                  "kernel max across the grid (worst cell). Largest individual wave ~1.5-2x Hs. "
-                 "Period matters: steep seas (Hs/1.56T²>0.04) are disproportionately uncomfortable.")
+                 "Period matters: steep seas (Hs/1.56T²>0.04) are disproportionately uncomfortable. "
+                 f"Sea-state source column: 'best_match' = Open-Meteo's default (Meteo-France MFWAM here); "
+                 f"'{SEA_FILL_MODEL}' = {SEA_FILL_LABEL} fill-in for dates past best_match's horizon -- a "
+                 "different wave model, so a step change at that boundary may be a model change, not weather.")
     if upper:
         text += (f" 500 hPa: z500>5850m=ridge/stable, <5700m=trough. "
                  "t500<-20°C=cold pool/instability for Oct Aegean (-10 to -15°C is normal background).")
@@ -1315,12 +1416,17 @@ Respond ONLY with valid JSON mapping card key → summary string. Example:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
-            max_tokens=2048,
+            # Same headroom as the other calls: at 2048 the JSON was cut off
+            # mid-string (runs of 24-26 Sep), leaving every card blank.
+            max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in response.content if b.type == "text"), "")
         raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{e} (stop_reason={response.stop_reason}, {len(raw)} chars)") from e
     except Exception as e:
         print(f"Card summaries skipped: {e}", file=sys.stderr)
         return {}
@@ -1350,7 +1456,13 @@ def generate_sailing_summary(wind_records, wind_source_label, sea_records, previ
     if previous_run_csv:
         previous_section = f"""
 
-PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS}):
+PREVIOUS RUN'S DATA, same trip and spots, for comparison (columns: {RUN_FIELDS}).
+Raw per-model rows, mixed tiers: tier=medium has one row per model (average them
+yourself for the previous consensus); tier=ec46 is the smoothed ensemble mean; tier=sea
+is waves. Compare like with like: this run's medium-range consensus against the
+previous run's medium-range rows (per model where useful), and use ec46 rows only for
+dates where this run itself is on ec46. Before calling a model split "persistent",
+check which model was stronger in each run -- it can flip.
 {previous_run_csv}"""
 
     changed_instruction = (
@@ -1667,6 +1779,17 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
                 block["dirSpread"] = dir_spread_s
                 block["perModel"] = per_model_s
                 block["disagreeNotes"] = disagree_notes
+            if key == "wind_max" and block.get("available"):
+                # Per-model span of the daily max on wind-flagged days, shown
+                # in place of the cross-model mean (same as wind_mean's cells).
+                value_span = {}
+                for spot in SPOTS:
+                    value_span[spot] = []
+                    for d in dates:
+                        m = next((r for r in wind_records if r["spot"] == spot and r["date"] == d), None)
+                        span = m.get("wind_max_span") if m and "wind" in (m.get("flag") or "").split("+") else None
+                        value_span[spot].append(list(span) if span else None)
+                block["valueSpan"] = value_span
             params[key] = block
         else:
             params[key] = placeholder_block(label, unit, wind_opens_note)
@@ -1706,10 +1829,13 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
     else:
         params["wind_dir"] = placeholder_block("Wind direction", "", wind_opens_note)
 
+    sea_source_label = "Open-Meteo Marine"
+    if sea_records and any(r.get("source") == SEA_FILL_MODEL for r in sea_records):
+        sea_source_label += f" (* = {SEA_FILL_LABEL} fill-in)"
     sea_specs = [("wave", "Wave height (Hs)", "m", 1), ("period", "Wave period", "s", 1)]
     for key, label, unit, decimals in sea_specs:
         if sea_records:
-            params[key] = build_param_block(sea_records, dates, key, label, unit, decimals, "Open-Meteo Marine",
+            params[key] = build_param_block(sea_records, dates, key, label, unit, decimals, sea_source_label,
                                              "Marine model doesn't reach these trip dates yet -- rerun closer to the trip")
         else:
             params[key] = placeholder_block(label, unit, sea_opens_note)
@@ -1730,7 +1856,7 @@ def build_dashboard_payload(run_stamp, wind_records, wind_source_label, wind_ope
         params["wave"]["shortPeriodWarn"] = steep_warn
 
     if sea_records:
-        params["wave_dir"] = build_direction_block(sea_records, dates, "dir", "Wave direction", "Open-Meteo Marine",
+        params["wave_dir"] = build_direction_block(sea_records, dates, "dir", "Wave direction", sea_source_label,
                                                     "Marine model doesn't reach these trip dates yet -- rerun closer to the trip")
     else:
         params["wave_dir"] = placeholder_block("Wave direction", "", sea_opens_note)
@@ -1961,11 +2087,16 @@ def main():
         print(f"Same ~{ns_km:.0f}x{ew_km:.0f}km kernel as wind (3x3 grid, {KERNEL_STEP_DEG} deg step): wave height = kernel max "
               "(worst case, same reasoning as gust); period/direction = kernel mean. Single model "
               "(Open-Meteo Marine), no models-consensus step on top.")
-        print("'-' beyond ~9-10 days out even though this tier is open -- rerun closer in for those days.")
+        print(f"Dates past best_match's ~9-10 day horizon are filled from {SEA_FILL_LABEL} (marked * on the dashboard).")
         records = []
         for name, (lat, lon) in SPOTS.items():
             try:
-                records += extract_sea_state_records(name, sea_state(lat, lon))
+                spot_records = extract_sea_state_records(name, sea_state(lat, lon))
+                try:
+                    fill_sea_state_gaps(name, lat, lon, spot_records)
+                except Exception as e:
+                    print(f"{name}: {SEA_FILL_LABEL} gap-fill failed ({e})", file=sys.stderr)
+                records += spot_records
             except Exception as e:
                 print(f"{name}: failed ({e})", file=sys.stderr)
         if records:
@@ -2055,13 +2186,23 @@ def main():
     # coarse ensemble mean, so prefer it for the dashboard's wind/temp/rain cards.
     # For trip dates beyond the medium-range horizon, fill in EC46 values so
     # the cards don't show blank cells for the back half of the trip.
+    # Name only the models that actually returned trip data -- a model whose
+    # horizon is shorter than the trip distance (ICON, ~7.5 days) is dropped
+    # from per_model, and the label shouldn't claim it's in the mean.
+    medium_label = MEDIUM_MODELS_LABEL
+    if medium_records:
+        present = {m for r in medium_records for m in r["per_model"]}
+        missing = [MEDIUM_MODEL_LABELS[m] for m in MEDIUM_MODELS if m not in present]
+        medium_label = " / ".join(MEDIUM_MODEL_LABELS[m] for m in MEDIUM_MODELS if m in present)
+        if missing:
+            medium_label += f"; {' / '.join(missing)} not in range yet"
     if medium_records and ec46_records:
         medium_dates = {r["date"] for r in medium_records}
         ec46_fill = [r for r in ec46_records if r["date"] not in medium_dates]
         wind_records = medium_records + ec46_fill
-        wind_source_label = f"Medium-range consensus ({MEDIUM_MODELS_LABEL}); EC46 where medium-range hasn't reached"
+        wind_source_label = f"Medium-range consensus ({medium_label}); EC46 where medium-range hasn't reached"
     elif medium_records:
-        wind_records, wind_source_label = medium_records, f"Medium-range consensus ({MEDIUM_MODELS_LABEL})"
+        wind_records, wind_source_label = medium_records, f"Medium-range consensus ({medium_label})"
     elif ec46_records:
         wind_records, wind_source_label = ec46_records, "EC46 ensemble mean"
     else:
@@ -2071,7 +2212,7 @@ def main():
         {"name": "EC46 extended range", "state": "live" if ec46_records else "pending",
          "note": "51-member ensemble mean" if ec46_records else f"opens ~{ec46_available}"},
         {"name": "Medium-range consensus", "state": "live" if medium_records else "pending",
-         "note": MEDIUM_MODELS_LABEL if medium_records else f"opens ~{medium_available}"},
+         "note": medium_label if medium_records else f"opens ~{medium_available}"},
         {"name": "Sea state", "state": "live" if sea_records else "pending",
          "note": "Open-Meteo Marine" if sea_records else f"opens ~{medium_available}"},
         {"name": "ECMWF synoptic charts", "state": "live" if chart_tier_live else "pending",

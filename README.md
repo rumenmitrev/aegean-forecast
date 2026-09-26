@@ -15,7 +15,8 @@ Thassos, and nearby spots). Every run:
    `charts.ecmwf.int` via the OpenCharts API (~9-10 days out). Saved to
    `charts/` and deployed alongside the dashboard in `site/charts/`. Chart
    URLs are cached in `.url` sidecar files; downloads are skipped when the
-   URL hasn't changed.
+   URL hasn't changed. The newest ECMWF run is tried first; dates it doesn't reach fall
+   back to the newest 00Z/12Z run (06Z/18Z runs only go to +144h, 00Z/12Z to +240h).
 3. Fetches GFS 500 hPa upper-atmosphere data (geopotential height, temperature,
    wind) and convection indicators (max CAPE across all spots, min 850 hPa
    temperature, SST from the marine model) for synoptic context.
@@ -99,6 +100,9 @@ same max-vs-mean split: **wave height is the kernel max** (a boat crossing this 
 meet its roughest cell, not just the exact point -- the same reasoning as gust), **period and
 direction are the kernel mean**. Marine is a single model, so unlike wind there's no further
 multi-model combine on top -- the kernel is the only combining step for sea state.
+Open-Meteo's default (`best_match`) wave model in the Aegean is Meteo-France MFWAM, which stops
+~9-10 days out; trip dates it leaves blank are filled from ECMWF WAM (`ecmwf_wam025`, 15 days),
+tagged in `runs.csv`'s model column and marked `*` on the dashboard.
 
 EC46 (the coarser, farther-out tier) is the one tier still read at a single point with no kernel
 or per-model combining at all -- it's already ECMWF's own finished 51-member ensemble mean, so
