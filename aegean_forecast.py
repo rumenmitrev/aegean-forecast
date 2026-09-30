@@ -193,7 +193,10 @@ EDGEONE_TOKEN_FILE = pathlib.Path(__file__).resolve().parent / "edgeone_token.tx
 # this exact task, so that approach was abandoned in favor of a real model.
 # Same graceful-skip pattern as the EdgeOne deploy if the key is missing.
 ANTHROPIC_API_KEY_FILE = pathlib.Path(__file__).resolve().parent / "anthropic_api_key.txt"
-SAILING_SUMMARY_MODEL = "claude-opus-5"
+SAILING_SUMMARY_MODEL = "claude-opus-5-5"
+# Opus 5.5 defaults to "medium" effort (Opus 5 defaulted to "high"); pin it
+# so summary quality matches what the prompts were tuned against.
+SAILING_SUMMARY_EFFORT = "high"
 # This API key is identity-linked with access to multiple workspaces, so
 # every request must say which one it acts in -- not a secret itself (useless
 # without the key), just an org identifier.
@@ -1418,6 +1421,7 @@ Respond ONLY with valid JSON mapping card key → summary string. Example:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
+            output_config={"effort": SAILING_SUMMARY_EFFORT},
             # Same headroom as the other calls: at 2048 the JSON was cut off
             # mid-string (runs of 24-26 Sep), leaving every card blank.
             max_tokens=16000,
@@ -1541,6 +1545,7 @@ present in it."""
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
+            output_config={"effort": SAILING_SUMMARY_EFFORT},
             max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1633,6 +1638,7 @@ Data:
         )
         response = client.messages.create(
             model=SAILING_SUMMARY_MODEL,
+            output_config={"effort": SAILING_SUMMARY_EFFORT},
             max_tokens=16000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1712,6 +1718,7 @@ def generate_chart_summaries(charts_meta):
             )
             response = client.messages.create(
                 model=SAILING_SUMMARY_MODEL,
+                output_config={"effort": SAILING_SUMMARY_EFFORT},
                 max_tokens=512,
                 messages=[{"role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},

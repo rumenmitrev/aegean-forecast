@@ -24,7 +24,7 @@ Thassos, and nearby spots). Every run:
    -- overwritten fresh each run, so it always reflects only the latest
    run's data (past runs' snapshots still exist in git history, just not
    accumulated in the file itself).
-5. Asks Claude (`claude-opus-5`) for three types of AI analysis (all skipped
+5. Asks Claude (`claude-opus-5-5`) for three types of AI analysis (all skipped
    cleanly if `ANTHROPIC_API_KEY` isn't set):
    - **Sailing briefing** -- narrative comparing this run to the previous one,
      covering regime, per-spot roughness/calm, disagreement days, convection
